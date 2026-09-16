@@ -1,0 +1,5 @@
+import jwt from 'jsonwebtoken';
+import {User,Role} from '../models/index.js';
+export async function auth(req,res,next){try{const h=req.headers.authorization||'';if(!h.startsWith('Bearer '))return res.status(401).json({message:'Authentication required'});const p=jwt.verify(h.slice(7),process.env.JWT_SECRET);const u=await User.findById(p.id);if(!u||!u.active)return res.status(401).json({message:'Invalid session'});req.user=u;next()}catch(e){res.status(401).json({message:'Invalid or expired token'})}}
+export const allow=(...roles)=>(req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({message:'Insufficient permissions'});
+export const permission=(...names)=>async(req,res,next)=>{if(req.user.role==='admin')return next();const role=await Role.findOne({name:req.user.role});const granted=new Set([...(req.user.permissions||[]),...(role?.permissions||[])]);if(names.some(x=>granted.has(x)))return next();return res.status(403).json({message:'Permission required: '+names.join(' or ')})};

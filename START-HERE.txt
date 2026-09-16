@@ -1,0 +1,16 @@
+BITECODE CONTROL — UPDATED PROJECT
+
+1. Copy backend/.env.example to backend/.env.
+2. Put your MongoDB Atlas URI and a strong JWT_SECRET in backend/.env.
+3. Put ADMIN_EMAIL and ADMIN_PASSWORD in backend/.env.
+4. Add OPENROUTER_API_KEY for AI and configure Judge0 for code execution.
+5. From this folder run:
+
+   npm run install:all
+   npm start
+
+Open http://localhost:5173
+Backend health: http://localhost:5000/api/health
+
+AUTO_SEED=true creates a default active event and BC-01 problem when the database is empty.
+Do not put real secrets into source control or share backend/.env.
