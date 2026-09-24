@@ -542,12 +542,48 @@
 
 
 /* ===== Professional workspace shell / judging & results upgrade ===== */
-html,body,#root{height:100%;min-height:100%}
-body{overflow:hidden}
-.app{height:100vh;min-height:0;overflow:hidden;grid-template-columns:300px minmax(0,1fr)}
-.app aside{min-height:0;overflow-y:auto;overflow-x:hidden}
-.app main{min-width:0;min-height:0;height:100vh;overflow:hidden;display:flex;flex-direction:column}
-.pageScroll{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;overscroll-behavior:contain}
+
+
+
+
+/* ===== Professional workspace shell / judging & results upgrade ===== */
+html,body,#root{min-height:100%}
+
+body{
+  margin:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+}
+
+.app{
+  min-height:100vh;
+  overflow:hidden;
+  grid-template-columns:300px minmax(0,1fr);
+}
+
+.app aside{
+  min-height:0;
+  overflow-y:auto;
+  overflow-x:hidden;
+}
+
+.app main{
+  min-width:0;
+  min-height:100vh;
+  height:auto;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+}
+
+.pageScroll{
+  min-height:0;
+  flex:1;
+  overflow-y:auto;
+  overflow-x:hidden;
+  scroll-behavior:smooth;
+  overscroll-behavior:contain;
+}
 .pageScroll::-webkit-scrollbar,.app aside::-webkit-scrollbar{width:8px}
 .pageScroll::-webkit-scrollbar-thumb,.app aside::-webkit-scrollbar-thumb{background:#282d3d;border-radius:99px}
 .pageScroll::-webkit-scrollbar-track,.app aside::-webkit-scrollbar-track{background:transparent}
