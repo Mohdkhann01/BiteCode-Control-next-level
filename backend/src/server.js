@@ -192,9 +192,284 @@ app.post('/api/admin/assignments',auth,permission('judging.manage'),asyncRoute(a
 }));
 app.delete('/api/admin/assignments/:id',auth,permission('judging.manage'),asyncRoute(async(req,res)=>{if(!isValidObjectId(req.params.id))return res.status(400).json({message:'Invalid assignment id.'}); const a=await JudgeAssignment.findById(req.params.id);if(!a)return res.status(404).json({message:'Assignment not found'});await Evaluation.deleteOne({assignment:a._id});await a.deleteOne();await audit(AuditLog,req.user,'DELETE','JudgeAssignment',a._id,{judge:a.judge,team:a.team,hackathon:a.hackathon});res.json({message:'Judge assignment removed'}); }));
 app.get('/api/judge/rubric',auth,allow('judge'),asyncRoute(async(req,res)=>{const h=await current();if(!h)return res.status(404).json({message:'No active hackathon'});const rubric=h.judgingRubric?.length?h.judgingRubric:[{name:'Problem fit',maxScore:20,weight:1},{name:'Technical execution',maxScore:20,weight:1},{name:'Innovation',maxScore:20,weight:1},{name:'UX / usability',maxScore:20,weight:1},{name:'Impact',maxScore:20,weight:1}];res.json(rubric)}));
-app.get('/api/judge/assignments',auth,allow('judge'),asyncRoute(async(req,res)=>res.json(await JudgeAssignment.find({judge:req.user._id}).populate('team','name status').populate({path:'team',populate:{path:'members',select:'name email'}}).populate('hackathon','name'))));
-app.post('/api/judge/evaluations',auth,allow('judge'),asyncRoute(async(req,res)=>{if(!isValidObjectId(req.body.assignmentId))return res.status(400).json({message:'Valid assignmentId is required'}); const a=await JudgeAssignment.findOne({_id:req.body.assignmentId,judge:req.user._id});if(!a)return res.status(404).json({message:'Assignment not found'});const scores=Array.isArray(req.body.scores)?req.body.scores:[];if(!scores.length)return res.status(400).json({message:'At least one rubric score is required.'});if(scores.some(x=>!Number.isFinite(Number(x.score))||Number(x.score)<0||Number(x.score)>Number(x.max||20)))return res.status(400).json({message:'One or more evaluation scores are invalid.'});const total=scores.reduce((x,y)=>x+Number(y.score||0),0);const e=await Evaluation.findOneAndUpdate({assignment:a._id},{hackathon:a.hackathon,assignment:a._id,judge:req.user._id,team:a.team,scores,total,comments:req.body.comments,submitted:true,submittedAt:new Date()},{upsert:true,returnDocument:'after'});a.status='completed';await a.save();const teamUsers=await Team.findById(a.team).distinct('members');await notifyUsers(teamUsers,{hackathon:a.hackathon,title:'Evaluation completed',message:'A judge completed an evaluation for your team.',type:'success',link:'/dashboard/results'});res.json(e)}));
-app.get('/api/admin/evaluations',auth,permission('judging.manage'),asyncRoute(async(req,res)=>res.json(await Evaluation.find(req.query.hackathonId?{hackathon:req.query.hackathonId}:{}).populate('judge','name email').populate('team','name').sort({total:-1}))));
+
+
+
+app.get('/api/judge/assignments',auth,allow('judge'),asyncRoute(async(req,res)=>{
+  const assignments=await JudgeAssignment.find({judge:req.user._id})
+    .populate({path:'team',select:'name status code members problem',populate:[
+      {path:'members',select:'name email college'},
+      {path:'problem',select:'title code track difficulty'}
+    ]})
+    .populate('hackathon','name')
+    .sort({createdAt:1})
+    .lean();
+
+  const teamIds=assignments.map(x=>x.team?._id).filter(Boolean);
+
+  const submissions=teamIds.length
+    ? await Submission.find({team:{$in:teamIds}})
+      .populate('problem','title code track difficulty')
+      .select('team projectName description features techStack github liveDemo demoVideo presentation screenshots futureScope status submittedAt')
+      .lean()
+    : [];
+
+  const byTeam=new Map(submissions.map(x=>[String(x.team),x]));
+
+  res.json(assignments.map(x=>({
+    ...x,
+    submission:byTeam.get(String(x.team?._id))||null
+  })));
+}));
+
+app.post('/api/judge/evaluations',auth,allow('judge'),asyncRoute(async(req,res)=>{
+  if(!isValidObjectId(req.body.assignmentId))
+    return res.status(400).json({message:'Valid assignmentId is required'});
+
+  const a=await JudgeAssignment.findOne({
+    _id:req.body.assignmentId,
+    judge:req.user._id
+  });
+
+  if(!a)
+    return res.status(404).json({message:'Assignment not found'});
+
+  const scores=Array.isArray(req.body.scores)?req.body.scores:[];
+
+  if(!scores.length)
+    return res.status(400).json({
+      message:'At least one rubric score is required.'
+    });
+
+  if(scores.some(x=>
+    !Number.isFinite(Number(x.score)) ||
+    Number(x.score)<0 ||
+    Number(x.score)>Number(x.max||20)
+  ))
+    return res.status(400).json({
+      message:'One or more evaluation scores are invalid.'
+    });
+
+  const total=scores.reduce((x,y)=>x+Number(y.score||0),0);
+
+  const e=await Evaluation.findOneAndUpdate(
+    {assignment:a._id},
+    {
+      hackathon:a.hackathon,
+      assignment:a._id,
+      judge:req.user._id,
+      team:a.team,
+      scores,
+      total,
+      comments:req.body.comments,
+      submitted:true,
+      submittedAt:new Date()
+    },
+    {
+      upsert:true,
+      returnDocument:'after'
+    }
+  );
+
+  a.status='completed';
+  await a.save();
+
+  const teamUsers=await Team.findById(a.team).distinct('members');
+
+  await notifyUsers(teamUsers,{
+    hackathon:a.hackathon,
+    title:'Evaluation completed',
+    message:'A judge completed an evaluation for your team.',
+    type:'success',
+    link:'/dashboard/results'
+  });
+
+  res.json(e);
+}));
+
+app.get('/api/admin/evaluations',auth,permission('judging.manage'),asyncRoute(async(req,res)=>
+  res.json(
+    await Evaluation.find(
+      req.query.hackathonId
+        ? {hackathon:req.query.hackathonId}
+        : {}
+    )
+    .populate('judge','name email')
+    .populate('team','name')
+    .sort({total:-1})
+  )
+));
+
+app.get('/api/admin/ranking',auth,permission('judging.manage'),asyncRoute(async(req,res)=>{
+  if(!isValidObjectId(req.query.hackathonId))
+    return res.status(400).json({
+      message:'Valid hackathonId is required'
+    });
+
+  const hackathonId=req.query.hackathonId;
+
+  const h=await Hackathon.findById(hackathonId)
+    .select('name settings status judgingRubric')
+    .lean();
+
+  if(!h)
+    return res.status(404).json({
+      message:'Hackathon not found'
+    });
+
+  const [
+    assignments,
+    completedEvaluations,
+    teams,
+    rows,
+    evaluations
+  ]=await Promise.all([
+    JudgeAssignment.countDocuments({
+      hackathon:hackathonId
+    }),
+
+    Evaluation.countDocuments({
+      hackathon:hackathonId,
+      submitted:true
+    }),
+
+    Team.countDocuments({
+      hackathon:hackathonId
+    }),
+
+    Evaluation.aggregate([
+      {
+        $match:{
+          hackathon:new mongoose.Types.ObjectId(hackathonId),
+          submitted:true
+        }
+      },
+      {
+        $addFields:{
+          maxTotal:{
+            $reduce:{
+              input:{$ifNull:['$scores',[]]},
+              initialValue:0,
+              in:{
+                $add:[
+                  '$$value',
+                  {$ifNull:['$$this.max',0]}
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        $group:{
+          _id:'$team',
+          score:{$avg:'$total'},
+          maxTotal:{$avg:'$maxTotal'},
+          evaluations:{$sum:1}
+        }
+      },
+      {
+        $sort:{
+          score:-1
+        }
+      },
+      {
+        $limit:200
+      },
+      {
+        $lookup:{
+          from:'teams',
+          localField:'_id',
+          foreignField:'_id',
+          as:'team'
+        }
+      },
+      {
+        $unwind:{
+          path:'$team',
+          preserveNullAndEmptyArrays:true
+        }
+      },
+      {
+        $project:{
+          _id:1,
+          score:{$round:['$score',2]},
+          maxTotal:{$round:['$maxTotal',2]},
+          evaluations:1,
+          team:{
+            _id:'$team._id',
+            name:'$team.name',
+            code:'$team.code'
+          },
+          members:{
+            $size:{
+              $ifNull:['$team.members',[]]
+            }
+          }
+        }
+      }
+    ]),
+
+    Evaluation.find({
+      hackathon:hackathonId,
+      submitted:true
+    })
+    .populate('judge','name email')
+    .populate('team','name code')
+    .sort({submittedAt:-1})
+    .limit(500)
+    .lean()
+  ]);
+
+  const normalizedRows=rows.map(r=>({
+    ...r,
+    scorePercent:r.maxTotal
+      ? Number((r.score/r.maxTotal*100).toFixed(1))
+      : 0
+  }));
+
+  const averageScore=evaluations.length
+    ? evaluations.reduce(
+        (n,e)=>n+Number(e.total||0),
+        0
+      )/evaluations.length
+    : 0;
+
+  const evaluatedTeams=normalizedRows.length;
+
+  const pendingEvaluations=Math.max(
+    0,
+    assignments-completedEvaluations
+  );
+
+  const completionPercent=assignments
+    ? Math.round(
+        completedEvaluations/assignments*100
+      )
+    : 0;
+
+  res.json({
+    hackathon:h,
+    stats:{
+      teams,
+      evaluatedTeams,
+      assignments,
+      completedEvaluations,
+      pendingEvaluations,
+      completionPercent,
+      averageScore:Number(averageScore.toFixed(2))
+    },
+    rows:normalizedRows,
+    evaluations
+  });
+}));
+
+
+
+
+
+
+
 app.get('/api/public/ranking',asyncRoute(async(req,res)=>{if(!isValidObjectId(req.query.hackathonId))return res.status(400).json({message:'Valid hackathonId is required'}); const h=await Hackathon.findById(req.query.hackathonId);if(!h?.settings?.publicLeaderboard)return res.status(403).json({message:'Leaderboard is private'});const rows=await Evaluation.aggregate([{$match:{submitted:true}},{$lookup:{from:'judgeassignments',localField:'assignment',foreignField:'_id',as:'assignmentDoc'}},{$unwind:'$assignmentDoc'},{$match:{'assignmentDoc.hackathon':h._id}},{$group:{_id:'$team',score:{$avg:'$total'},evaluations:{$sum:1}}},{$sort:{score:-1}},{$limit:200},{$lookup:{from:'teams',localField:'_id',foreignField:'_id',as:'team'}},{$unwind:{path:'$team',preserveNullAndEmptyArrays:true}},{$project:{_id:1,score:{$round:['$score',2]},evaluations:1,team:{_id:'$team._id',name:'$team.name',code:'$team.code'}}}]);res.json(rows)}));
 
 // Announcements, attendance, certificates

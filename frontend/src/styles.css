@@ -539,3 +539,97 @@
 .problemSection{margin-bottom:18px}.problemSection>.problemGrid{margin-top:12px}.problemAdminGroup{margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.08)}.problemAdminGroup:first-of-type{border-top:0;margin-top:0}.problemAdminGroup h3{margin:4px 0}.scannerBox{min-height:290px;border:1px dashed rgba(255,255,255,.16);border-radius:16px;padding:14px;display:grid;place-items:center;background:rgba(255,255,255,.02)}#attendance-reader{width:min(100%,520px)}.scannerHidden{display:none}.scannerPlaceholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;min-height:250px;color:var(--muted,#8d93a9)}.scannerPlaceholder svg{color:#8d82ff}.scannerPlaceholder b{color:var(--text,#fff);font-size:18px}.attendanceQrCard{text-align:center}.attendanceQr{width:min(100%,360px);aspect-ratio:1;object-fit:contain;background:#fff;border-radius:14px;padding:12px;margin:10px auto 14px;display:block}.qrToken{display:block;max-width:100%;overflow:auto;margin:0 auto 14px;padding:9px;border-radius:9px;background:rgba(255,255,255,.05)}
 @media print{body *{visibility:hidden!important}.attendanceQrCard,.attendanceQrCard *{visibility:visible!important}.attendanceQrCard{position:absolute;left:0;top:0;width:100%;background:#fff!important;color:#111!important}.attendanceQrCard .qrToken{color:#111!important}.attendanceQrCard button{display:none!important}}
 .scannerType{display:flex;flex-direction:column;gap:7px;max-width:360px;margin:14px 0}.scannerType select{width:100%}
+
+
+/* ===== Professional workspace shell / judging & results upgrade ===== */
+html,body,#root{height:100%;min-height:100%}
+body{overflow:hidden}
+.app{height:100vh;min-height:0;overflow:hidden;grid-template-columns:300px minmax(0,1fr)}
+.app aside{min-height:0;overflow-y:auto;overflow-x:hidden}
+.app main{min-width:0;min-height:0;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.pageScroll{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;overscroll-behavior:contain}
+.pageScroll::-webkit-scrollbar,.app aside::-webkit-scrollbar{width:8px}
+.pageScroll::-webkit-scrollbar-thumb,.app aside::-webkit-scrollbar-thumb{background:#282d3d;border-radius:99px}
+.pageScroll::-webkit-scrollbar-track,.app aside::-webkit-scrollbar-track{background:transparent}
+
+/* Judge console */
+.judgeConsole{display:grid;grid-template-columns:300px minmax(0,1fr);gap:16px;padding:0 48px 48px;min-height:calc(100vh - 185px)}
+.judgeQueue,.judgeReviewStack .card{background:linear-gradient(180deg,#0e1119,#0a0c12);border:1px solid #272b39;border-radius:16px}
+.judgeQueue{min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.judgeQueueHead{display:flex;align-items:center;justify-content:space-between;padding:18px 18px 10px;border-bottom:1px solid rgba(255,255,255,.06)}
+.judgeQueueHead h2{font-size:18px;margin:5px 0 0}
+.judgeQueueHead>span{min-width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#171a25;border:1px solid #303547;font-weight:800}
+.judgeProgress{height:5px;background:#171a23;margin:14px 18px 5px;border-radius:99px;overflow:hidden}
+.judgeProgress span{display:block;height:100%;background:linear-gradient(90deg,#8e72ff,#56d9ff);border-radius:99px;transition:width .25s ease}
+.queueMeta{padding:0 18px 12px;color:#747b91}
+.judgeQueueList{overflow:auto;padding:0 8px 10px}
+.judgeQueueItem{width:100%;display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:9px;text-align:left;background:transparent;color:#c9cddd;border:1px solid transparent;border-radius:12px;padding:11px 9px;margin:2px 0;cursor:pointer}
+.judgeQueueItem:hover{background:#11141d;border-color:#282d3c}
+.judgeQueueItem.active{background:linear-gradient(90deg,rgba(126,91,224,.18),rgba(72,217,255,.05));border-color:#594b8e;color:#fff}
+.queueIndex{font:700 11px ui-monospace,monospace;color:#737b93}
+.queueTeam{min-width:0}.queueTeam b,.queueTeam small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queueTeam b{font-size:13px}.queueTeam small{font-size:10px;color:#747b91;margin-top:3px}
+.judgeQueueItem .badge{font-size:9px;padding:4px 6px}
+.judgeReview{min-width:0}
+.judgeReviewStack{display:grid;gap:16px}
+.projectHeroCard{padding:22px}
+.projectHeroTop{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}
+.projectHeroTop h2{font-size:25px;margin:6px 0 4px}.projectHeroTop p{margin:0;color:#7f879c}
+.projectMetaGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:20px}
+.projectMetaGrid>div{padding:13px;border:1px solid #272c3a;border-radius:11px;background:#0a0c12}
+.projectMetaGrid span,.projectBrief small{display:block;font-size:9px;letter-spacing:.12em;color:#747b91;margin-bottom:6px}.projectMetaGrid b{display:block;font-size:12px}
+.projectLinks{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.projectBrief{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,.07)}
+.projectBrief>div{padding:12px;background:#0a0c12;border:1px solid #242938;border-radius:10px}.projectBrief>div:first-child{grid-column:1/-1}.projectBrief p{margin:0;color:#a1a7ba;line-height:1.55;font-size:13px}
+.evaluationCard{padding:22px!important}
+.scoreSummary{display:flex;align-items:baseline;gap:4px;padding:9px 12px;border:1px solid #303548;border-radius:11px;background:#11141d}.scoreSummary strong{font-size:25px}.scoreSummary span{color:#7c8499}
+.rubricPro{display:grid;gap:10px}
+.rubricProRow{display:grid;grid-template-columns:minmax(0,1fr) 100px 45px;align-items:center;gap:12px;padding:13px;border:1px solid #292e3c;border-radius:11px;background:#0a0c12}
+.rubricLabel b,.rubricLabel small{display:block}.rubricLabel b{font-size:13px}.rubricLabel small{color:#737a90;margin-top:4px;font-size:10px}
+.rubricProRow input{width:100%;background:#080a10;border:1px solid #343a4a;color:#fff;border-radius:9px;padding:10px;text-align:center;font-weight:800;outline:none}.rubricProRow input:focus{border-color:#7763c7;box-shadow:0 0 0 3px rgba(105,80,185,.1)}.rubricProRow>span{color:#7d8498;font-size:12px}
+.scoreMeter{height:7px;background:#171a23;border-radius:99px;overflow:hidden;margin:14px 0 20px}.scoreMeter span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#8e72ff,#56d9ff);transition:width .2s ease}
+.feedbackLabel{display:grid;gap:8px}.feedbackLabel>span{font-size:10px;letter-spacing:.1em;color:#7e869a}.feedbackLabel textarea{width:100%;background:#080a10;border:1px solid #292e3c;color:#eef0f7;border-radius:10px;padding:13px;resize:vertical;outline:none}.feedbackLabel textarea:focus{border-color:#6755a7}
+.evaluationFooter{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.07)}.evaluationFooter small{color:#737a90}
+
+/* Results */
+.resultsStats{padding:0 48px 20px;display:grid;grid-template-columns:repeat(4,1fr);gap:13px}
+.resultsGrid,.resultsAdminGrid{align-items:start}
+.leaderboardPro{overflow:hidden}
+.leaderboardPro .leaderHead,.leaderboardPro .leaderRow{display:grid;grid-template-columns:70px minmax(0,1fr) 110px;align-items:center;gap:15px}
+.leaderboardPro .leaderHead{padding:11px 14px;color:#697187;font-size:10px;letter-spacing:.12em;border-bottom:1px solid #252a38}
+.leaderboardPro .leaderRow{padding:14px;border-bottom:1px solid #202430}.leaderboardPro .leaderRow:last-child{border-bottom:0}
+.rankNo{font:800 13px ui-monospace,monospace;color:#8c94aa}.leaderRow>div:nth-child(2) b,.leaderRow>div:nth-child(2) small{display:block}.leaderRow>div:nth-child(2) small{color:#737b91;margin-top:4px;font-size:10px}.rankScore{text-align:right}.rankScore strong{display:block;font-size:18px}.rankScore small{color:#70788e;font-size:10px}
+.podiumRow{background:linear-gradient(90deg,rgba(126,91,224,.05),transparent 60%)}
+.resultExplain{display:grid;gap:0}.resultExplain>div{display:flex;gap:12px;padding:15px 0;border-bottom:1px solid rgba(255,255,255,.07)}.resultExplain>div:last-child{border-bottom:0}.resultExplain span{width:30px;height:30px;border:1px solid #303548;border-radius:8px;display:grid;place-items:center;font:700 10px ui-monospace;color:#8f97ad;flex:none}.resultExplain b,.resultExplain small{display:block}.resultExplain small{color:#777f94;margin-top:4px;line-height:1.45}
+.resultsAdminStats{padding-top:0}
+.rankingInsights{min-height:100%}
+.resultGauge{padding:15px;border:1px solid #282d3b;border-radius:12px;background:#0a0c12}.resultGauge>div:first-child{display:flex;align-items:baseline;justify-content:space-between}.resultGauge strong{font-size:30px}.resultGauge span{color:#747b90;font-size:11px}.insightList{margin-top:12px}.insightList>div{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.07);color:#7c8498}.insightList b{color:#eef0f7}
+.evaluationAuditTable{margin:0 48px 48px;overflow:hidden}.evaluationAuditTable .tableWrap{margin-top:0}.evaluationAuditTable table{min-width:1000px}.evaluationAuditTable td{vertical-align:top}.evaluationAuditTable td small{display:block;color:#747b91;margin-top:3px}.miniRubric{display:flex;flex-wrap:wrap;gap:5px;max-width:330px}.miniRubric span{padding:4px 6px;background:#11141c;border:1px solid #292e3b;border-radius:6px;font-size:9px;color:#8c94a9}.miniRubric b{color:#dfe2ec}.feedbackCell{max-width:240px;white-space:normal;line-height:1.45;color:#9aa1b4}
+
+/* Make existing table containers stay inside their module instead of growing the page */
+.tableWrap{max-width:100%;overflow:auto}
+
+@media(max-width:1100px){
+  .app{grid-template-columns:250px minmax(0,1fr)}
+  .judgeConsole{grid-template-columns:260px minmax(0,1fr)}
+  .projectMetaGrid{grid-template-columns:1fr 1fr}
+  .resultsStats{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:760px){
+  html,body,#root{height:auto;min-height:100%}
+  body{overflow:auto}
+  .app{height:auto;min-height:100vh;overflow:visible;display:block}
+  .app aside{position:fixed;z-index:30;left:-280px;width:280px;height:100vh;min-height:100vh}
+  .app aside.show{left:0}
+  .app main{height:auto;min-height:100vh;overflow:visible;display:block}
+  .pageScroll{overflow:visible;min-height:0}
+  .judgeConsole{display:block;padding:0 18px 30px;min-height:0}
+  .judgeQueue{max-height:310px;margin-bottom:14px}
+  .judgeQueueList{max-height:220px}
+  .judgeReviewStack{gap:12px}
+  .projectMetaGrid,.projectBrief{grid-template-columns:1fr}
+  .projectBrief>div:first-child{grid-column:auto}
+  .rubricProRow{grid-template-columns:minmax(0,1fr) 85px 40px}
+  .evaluationFooter{align-items:flex-start;flex-direction:column}
+  .resultsStats{padding:0 18px 16px;grid-template-columns:1fr 1fr}
+  .evaluationAuditTable{margin:0 18px 30px}
+}
