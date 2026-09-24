@@ -18,18 +18,19 @@ async function buildContext(req){
 
   if(req.user.role==='admin'){
     const [participants,teams,submissions,judges,assignments,evaluations,problems,attendance,certificates,announcements]=await Promise.all([
-      User.find({role:'participant'}).select('name email active paymentStatus college department enrollmentId').sort({createdAt:-1}).limit(500).lean(),
-      Team.find({hackathon:h._id}).populate('leader','name email').populate('members','name email').populate('problem','code title').lean(),
-      Submission.find({hackathon:h._id}).populate('team','name code').populate('problem','code title').select('projectName status submittedAt team problem github liveDemo').lean(),
+      User.find({role:'participant'}).select('name email active paymentStatus college department enrollmentId').sort({createdAt:-1}).limit(100).lean(),
+      Team.find({hackathon:h._id}).select('name code status leader members problem createdAt').populate('leader','name email').populate('members','name email').populate('problem','code title').sort({createdAt:-1}).limit(200).lean(),
+      Submission.find({hackathon:h._id}).populate('team','name code').populate('problem','code title').select('projectName status submittedAt team problem github liveDemo').sort({submittedAt:-1}).limit(200).lean(),
       User.countDocuments({role:'judge',active:true}),
-      JudgeAssignment.find({hackathon:h._id}).populate('judge','name email').populate('team','name code').lean(),
-      Evaluation.find({submitted:true}).populate('judge','name').populate('team','name code').select('judge team total submittedAt').lean(),
-      Problem.find({hackathon:h._id}).select('code title track difficulty published').lean(),
+      JudgeAssignment.find({hackathon:h._id}).populate('judge','name email').populate('team','name code').sort({createdAt:-1}).limit(200).lean(),
+      Evaluation.find({hackathon:h._id,submitted:true}).populate('judge','name').populate('team','name code').select('judge team total submittedAt').sort({submittedAt:-1}).limit(200).lean(),
+      Problem.find({hackathon:h._id}).select('code title track difficulty published').sort({createdAt:-1}).limit(100).lean(),
       Attendance.countDocuments({hackathon:h._id}),
       Certificate.countDocuments({hackathon:h._id}),
       Announcement.find({hackathon:h._id}).select('title type published createdAt').sort({createdAt:-1}).limit(20).lean()
     ]);
-    base.adminData={participants,participantCount:participants.length,teams,teamCount:teams.length,submissions,submissionCount:submissions.length,judgeCount:judges,assignments,evaluations,problemCount:problems.length,problems,attendanceRecords:attendance,certificateCount:certificates,announcements};
+    const participantCount=await User.countDocuments({role:'participant'});
+    base.adminData={participants,participantCount,teams,teamCount:teams.length,submissions,submissionCount:submissions.length,judgeCount:judges,assignments,evaluations,problemCount:problems.length,problems,attendanceRecords:attendance,certificateCount:certificates,announcements};
   } else if(req.user.role==='judge'){
     const assignments=await JudgeAssignment.find({hackathon:h._id,judge:req.user._id}).populate({path:'team',populate:[{path:'members',select:'name email'},{path:'problem',select:'code title description'}]}).lean();
     const teamIds=assignments.map(a=>a.team?._id).filter(Boolean);

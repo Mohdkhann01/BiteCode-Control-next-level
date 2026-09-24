@@ -21,23 +21,40 @@ const LANGUAGE_IDS = {
 const LANGUAGE_NAMES = {python:"Python",javascript:"JavaScript",c:"C",cpp:"C++",java:"Java",csharp:"C#",go:"Go",rust:"Rust",php:"PHP",ruby:"Ruby",kotlin:"Kotlin"};
 const headers = () => ({"Content-Type":"application/json", ...(JUDGE0_TOKEN?{"X-Auth-Token":JUDGE0_TOKEN}:{})});
 
-async function execute(sourceCode, languageId, stdin="", limits={}) {
-  if (!Number.isInteger(languageId)) throw new Error("Unsupported programming language.");
-  const body = {source_code:sourceCode, language_id:languageId, stdin, cpu_time_limit:Number(limits.timeLimit||2), memory_limit:Number(limits.memoryLimit||128000)};
-  const create = await fetch(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {method:"POST", headers:headers(), body:JSON.stringify(body)});
+async function fetchWithTimeout(url, options={}, timeoutMs=10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {...options, signal: controller.signal});
+  } catch (e) {
+    if (e?.name === 'AbortError') throw new Error('Code execution service request timed out.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function execute(sourceCode, languageId, stdin='', limits={}) {
+  if (!Number.isInteger(languageId)) throw new Error('Unsupported programming language.');
+  if (String(sourceCode||'').length > 100000) throw new Error('Source code is too large for online execution.');
+  const body = {source_code:sourceCode, language_id:languageId, stdin:String(stdin??''), cpu_time_limit:Number(limits.timeLimit||2), memory_limit:Number(limits.memoryLimit||128000)};
+  const create = await fetchWithTimeout(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {method:'POST', headers:headers(), body:JSON.stringify(body)}, 10000);
   const createText = await create.text();
   let created; try { created=JSON.parse(createText); } catch { throw new Error(`Code execution service returned invalid JSON (HTTP ${create.status}).`); }
   if (!create.ok) throw new Error(created?.error || created?.message || `Code execution service error (${create.status}).`);
-  if (!created.token) throw new Error("Code execution service did not return a submission token.");
-  for (let i=0;i<25;i++) {
-    await new Promise(r=>setTimeout(r,350));
-    const resultRes=await fetch(`${JUDGE0_URL}/submissions/${created.token}?base64_encoded=false&fields=stdout,stderr,compile_output,status_id,status,time,memory,message`,{headers:headers()});
+  if (!created.token) throw new Error('Code execution service did not return a submission token.');
+  const deadline=Date.now()+15000;
+  let delay=300;
+  while(Date.now()<deadline){
+    await new Promise(r=>setTimeout(r,delay));
+    const resultRes=await fetchWithTimeout(`${JUDGE0_URL}/submissions/${encodeURIComponent(created.token)}?base64_encoded=false&fields=stdout,stderr,compile_output,status_id,status,time,memory,message`,{headers:headers()},7000);
     const txt=await resultRes.text();
-    let result; try { result=JSON.parse(txt); } catch { continue; }
+    let result; try { result=JSON.parse(txt); } catch { delay=Math.min(1000,delay+100); continue; }
     if (!resultRes.ok) throw new Error(result?.error || result?.message || `Code result error (${resultRes.status}).`);
     if (![1,2].includes(result.status_id)) return result;
+    delay=Math.min(900,delay+100);
   }
-  throw new Error("Code execution timed out while waiting for the judge.");
+  throw new Error('Code execution timed out while waiting for the judge.');
 }
 
 async function currentHackathon(){ return Hackathon.findOne({status:{$nin:["closed","archived"]}}).sort({createdAt:-1}); }
@@ -111,6 +128,7 @@ router.post("/submit", auth, async (req,res)=>{
     if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
     const {problemId,language,sourceCode}=req.body||{};
     if(!problemId || !sourceCode?.trim()) return res.status(400).json({message:"Problem and source code are required."});
+    if(!/^[a-f\d]{24}$/i.test(String(problemId))) return res.status(404).json({message:"Problem not found. Refresh the Code Lab and open a published problem."});
     const p=await Problem.findOne({_id:problemId,published:true}); if(!p) return res.status(404).json({message:"Problem not found. Refresh the Code Lab and open a published problem."});
     const h=p.hackathon ? await Hackathon.findById(p.hackathon) : await currentHackathon();
     const active=await currentHackathon();

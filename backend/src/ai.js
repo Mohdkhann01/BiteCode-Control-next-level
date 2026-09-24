@@ -26,6 +26,9 @@ const APP_URL =
   process.env.AI_APP_URL ||
   "http://localhost:5173";
 
+const AI_TIMEOUT_MS = Math.max(5000, Number(process.env.AI_TIMEOUT_MS || 25000));
+const MAX_CONTEXT_CHARS = Math.max(20000, Number(process.env.AI_MAX_CONTEXT_CHARS || 90000));
+
 
 /* =========================================================
    CONFIGURATION CHECK
@@ -126,7 +129,10 @@ export async function chat(messages, options = {}) {
 
   try {
 
-    response = await fetch(
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+    try {
+      response = await fetch(
       `${BASE_URL}/chat/completions`,
       {
         method: "POST",
@@ -139,15 +145,20 @@ export async function chat(messages, options = {}) {
           "X-Title": APP_NAME
         },
 
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
       }
-    );
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
 
   } catch (error) {
 
-    throw new Error(
-      `Unable to connect to OpenRouter: ${error.message}`
-    );
+    if (error?.name === "AbortError") {
+      throw new Error(`AI provider request timed out after ${Math.round(AI_TIMEOUT_MS / 1000)} seconds.`);
+    }
+    throw new Error(`Unable to connect to OpenRouter: ${error.message}`);
 
   }
 
@@ -229,12 +240,10 @@ export async function askAI(question, context = {}) {
 
     try {
 
-      contextText =
-        `\n\nHackathon data:\n${JSON.stringify(
-          context,
-          null,
-          2
-        )}`;
+      contextText = `\n\nHackathon data:\n${JSON.stringify(context, null, 2)}`;
+      if (contextText.length > MAX_CONTEXT_CHARS) {
+        contextText = contextText.slice(0, MAX_CONTEXT_CHARS) + "\n[Additional context omitted to keep the AI request stable.]";
+      }
 
     } catch {
 
