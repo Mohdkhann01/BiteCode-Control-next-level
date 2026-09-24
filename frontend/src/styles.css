@@ -554,36 +554,55 @@ body{
   overflow-x:hidden;
   overflow-y:auto;
 }
+/* ===== Logged-in workspace: two independent scroll areas ===== */
 
 .app{
+  width:100%;
+  height:100vh;
   min-height:100vh;
-  overflow:hidden;
+  display:grid;
   grid-template-columns:300px minmax(0,1fr);
+  overflow:hidden;
 }
 
 .app aside{
+  width:300px;
+  height:100vh;
   min-height:0;
   overflow-y:auto;
   overflow-x:hidden;
+  overscroll-behavior:contain;
 }
 
 .app main{
+  width:100%;
+  height:100vh;
   min-width:0;
-  min-height:100vh;
-  height:auto;
-  overflow:hidden;
-  display:flex;
-  flex-direction:column;
-}
-
-.pageScroll{
   min-height:0;
-  flex:1;
   overflow-y:auto;
   overflow-x:hidden;
-  scroll-behavior:smooth;
+  display:flex;
+  flex-direction:column;
   overscroll-behavior:contain;
 }
+
+/*
+  IMPORTANT:
+  pageScroll is NOT the scrollbar anymore.
+  The right-side <main> is the scrollbar.
+*/
+.app .pageScroll{
+  width:100%;
+  min-width:0;
+  height:auto;
+  min-height:0;
+  flex:0 0 auto;
+  overflow:visible;
+}
+
+ 
+
+
 .pageScroll::-webkit-scrollbar,.app aside::-webkit-scrollbar{width:8px}
 .pageScroll::-webkit-scrollbar-thumb,.app aside::-webkit-scrollbar-thumb{background:#282d3d;border-radius:99px}
 .pageScroll::-webkit-scrollbar-track,.app aside::-webkit-scrollbar-track{background:transparent}
