@@ -2,16 +2,19 @@ import React,{useEffect,useMemo,useState} from "react";
 import {Bot,X,Send,Sparkles,Trash2} from "lucide-react";
 import axios from "axios";
 
-const API=import.meta.env.VITE_API_URL||"http://localhost:5000/api";
+const PRODUCTION_API="https://bitecode-control-next-level.onrender.com/api";
+const configuredApi=import.meta.env.VITE_API_URL?.trim();
+const API=import.meta.env.PROD?PRODUCTION_API:(configuredApi||"http://localhost:5000/api");
 const api=axios.create({baseURL:API});
-api.interceptors.request.use(config=>{const token=localStorage.getItem("token");if(token)config.headers.Authorization=`Bearer ${token}`;return config});
-const readUser=()=>{try{return JSON.parse(localStorage.getItem("user")||"null")}catch{return null}};
+api.interceptors.request.use(config=>{const token=sessionStorage.getItem("token");if(token)config.headers.Authorization=`Bearer ${token}`;return config});
+const readUser=()=>{try{return JSON.parse(sessionStorage.getItem("user")||"null")}catch{return null}};
 
 export default function AIAssistant(){
   const [open,setOpen]=useState(false);
   const [user,setUser]=useState(readUser);
   const [enabled,setEnabled]=useState(true);
   const [available,setAvailable]=useState(false);
+  const [mode,setMode]=useState("full");
   const [messages,setMessages]=useState([]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
@@ -24,7 +27,7 @@ export default function AIAssistant(){
     "What is the current event status?"
   ]:[
     "How do I create a team?",
-    "Give me Java code to print Hello World",
+    "How should I approach a coding problem?",
     "How do I submit my solution?",
     "How can I verify my certificate?"
   ],[isAdmin]);
@@ -36,10 +39,10 @@ export default function AIAssistant(){
       if(!u){setEnabled(false);setOpen(false);setAvailable(false);return;}
       if(u.role==='admin'){
         setEnabled(true);
-        try{const r=await api.get('/ai/status');setAvailable(r.data?.enabled===true)}catch{setAvailable(false)}
+        try{const r=await api.get('/ai/status');setAvailable(r.data?.enabled===true);setMode(r.data?.mode==='guidance'?'guidance':'full')}catch{setAvailable(false);setMode('full')}
         return;
       }
-      try{const r=await api.get('/ai/status');setEnabled(true);setAvailable(r.data?.enabled===true)}catch{setEnabled(true);setAvailable(false)}
+      try{const r=await api.get('/ai/status');setEnabled(r.data?.enabled===true);setAvailable(r.data?.enabled===true);setMode(r.data?.mode==='guidance'?'guidance':'full');if(r.data?.enabled!==true)setOpen(false)}catch{setEnabled(false);setAvailable(false);setMode('full');setOpen(false)}
     };
     refresh();
     const onStorage=()=>refresh();
@@ -65,7 +68,7 @@ export default function AIAssistant(){
     }catch(e){
       const status=e.response?.status;
       const server=e.response?.data?.message;
-      if(status===401){localStorage.removeItem('token');localStorage.removeItem('user');setEnabled(false);setOpen(false);}
+      if(status===401){sessionStorage.removeItem('token');sessionStorage.removeItem('user');setEnabled(false);setOpen(false);}
       else setMessages(prev=>[...prev,{role:'assistant',content:server||'The AI service is temporarily unavailable.'}]);
     }finally{setLoading(false)}
   };
@@ -76,14 +79,14 @@ export default function AIAssistant(){
   return <>
     {!open&&<button className="aiFloatingButton" onClick={()=>setOpen(true)} aria-label="Open BiteCode AI"><Sparkles size={22}/><span>AI</span></button>}
     {open&&<div className="aiChat">
-      <div className="aiHeader"><div className="aiHeaderInfo"><div className="aiLogo"><Bot size={20}/></div><div><strong>{isAdmin?'BiteCode Admin AI':'BiteCode AI'}</strong><small><span className={"aiOnlineDot "+(available?'':'offline')}/>{available?'Online assistant':'AI service unavailable'}</small></div></div><div className="aiHeaderActions"><button onClick={clearChat} title="Clear chat"><Trash2 size={16}/></button><button onClick={()=>setOpen(false)} title="Close"><X size={19}/></button></div></div>
+      <div className="aiHeader"><div className="aiHeaderInfo"><div className="aiLogo"><Bot size={20}/></div><div><strong>{isAdmin?'BiteCode Admin AI':'BiteCode AI'}</strong><small><span className={"aiOnlineDot "+(available?'':'offline')}/>{available?(isAdmin?'Full AI':(mode==='guidance'?'Guidance AI':'Full AI')):'AI service unavailable'}</small></div></div><div className="aiHeaderActions"><button onClick={clearChat} title="Clear chat"><Trash2 size={16}/></button><button onClick={()=>setOpen(false)} title="Close"><X size={19}/></button></div></div>
       <div className="aiMessages">
         {messages.map((m,i)=><div key={i} className={`aiMessage ${m.role==='user'?'aiUserMessage':'aiBotMessage'}`}>{m.role==='assistant'&&<div className="aiSmallIcon"><Bot size={13}/></div>}<div className="aiBubble">{m.content}</div></div>)}
         {loading&&<div className="aiMessage aiBotMessage"><div className="aiSmallIcon"><Bot size={13}/></div><div className="aiBubble aiTyping"><span/><span/><span/></div></div>}
       </div>
       {messages.length===1&&!loading&&<div className="aiSuggestions"><small>Try asking</small><div>{suggestions.map(s=><button key={s} onClick={()=>sendMessage(s)}>{s}</button>)}</div></div>}
       <div className="aiInputArea"><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')sendMessage()}} placeholder="Ask BiteCode AI..." disabled={loading}/><button onClick={()=>sendMessage()} disabled={!input.trim()||loading}><Send size={17}/></button></div>
-      <div className="aiFooter">AI answers use only information your role is authorized to access.</div>
+      <div className="aiFooter">{mode==='guidance'&&!isAdmin?'Guidance mode: hints and explanations only — no complete contest solution.':'AI answers use only information your role is authorized to access.'}</div>
     </div>}
   </>;
 }

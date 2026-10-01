@@ -2,16 +2,17 @@
 
 import 'dotenv/config';
 import dns from 'node:dns';
+import net from 'node:net';
 import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import bcrypt from 'bcryptjs'; import rateLimit from 'express-rate-limit'; import fs from 'fs'; import path from 'path'; import crypto from 'crypto';
-import {User,Hackathon,Role,Payment,Team,Invitation,Problem,Submission,JudgeAssignment,Evaluation,CodeSubmission,Announcement,Ticket,Vote,Attendance,Certificate,AuditLog,Notification} from './models/index.js';
+import {User,Hackathon,Role,Payment,Team,Invitation,Problem,Submission,JudgeAssignment,Evaluation,CodeSubmission,Announcement,Ticket,Vote,Attendance,Certificate,AuditLog,Notification,Feedback} from './models/index.js';
 import {auth,allow,permission} from './middleware/auth.js'; 
 
 
 import aiRoutes from "./routes/aiRoutes.js";
 import compilerRoutes from "./routes/compilerRoutes.js";
-console.log("AI ROUTES LOADED");
 
 import {upload} from './middleware/upload.js'; import {tokenFor,code,certId,audit} from './utils.js';
+import {mailConfigured,sendFeedbackConfirmation} from './mailer.js';
 
 
 const app = express();
@@ -23,7 +24,8 @@ app.use(cors({
 }));
 
 app.use(express.json({
-  limit: '5mb'
+  limit: '5mb',
+  verify:(req,_res,buf)=>{if(req.originalUrl==='/api/payments/razorpay/webhook')req.rawBody=Buffer.from(buf);}
 }));
 
 app.use(rateLimit({
@@ -37,7 +39,9 @@ app.use('/api/compiler', compilerRoutes);
 
 
 const uploadDir=process.env.UPLOAD_DIR||'uploads'; fs.mkdirSync(uploadDir,{recursive:true}); app.use('/uploads',express.static(path.resolve(uploadDir)));
-const asyncRoute=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next); const current=async()=>Hackathon.findOne({status:{$nin:['closed','archived']}}).sort({createdAt:-1});
+const asyncRoute=fn=>(req,res,next)=>Promise.resolve(fn(req,res,next)).catch(next);
+const isValidObjectId=value=>mongoose.Types.ObjectId.isValid(String(value||''));
+const current=async()=>Hackathon.findOne({status:{$nin:['closed','archived']}}).sort({createdAt:-1});
 const safe=u=>{const o=u.toObject();delete o.passwordHash;delete o.passwordResetToken;delete o.passwordResetExpires;delete o.attendanceToken;return o};
 const ensureAttendanceToken=async u=>{if(u.attendanceToken)return u.attendanceToken;for(let i=0;i<5;i++){const t=crypto.randomBytes(24).toString('base64url');try{u.attendanceToken=t;await u.save();return t}catch(e){if(e?.code!==11000)throw e;}}throw new Error('Could not create a unique attendance token.');};
 const validateEvent=body=>{if(body.teamMin!=null&&body.teamMax!=null&&Number(body.teamMin)>Number(body.teamMax))return 'Team minimum cannot exceed team maximum';return null};
@@ -46,14 +50,14 @@ app.get('/api/health',(_,res)=>res.json({ok:true,service:'hackathon-platform',ti
 app.post('/api/auth/register',asyncRoute(async(req,res)=>{const {name,email,password}=req.body;if(!name||!email||!password||password.length<8)return res.status(400).json({message:'Name, email and password (8+ chars) are required'});if(await User.exists({email:email.toLowerCase()}))return res.status(409).json({message:'Email already registered'});const u=await User.create({name,email:email.toLowerCase(),passwordHash:await bcrypt.hash(password,12),attendanceToken:crypto.randomBytes(24).toString('base64url')});res.status(201).json({token:tokenFor(u),user:safe(u)})}));
 app.post('/api/auth/login',asyncRoute(async(req,res)=>{const email=req.body.email?.toLowerCase().trim();const u=await User.findOne({email});if(!u||!await bcrypt.compare(req.body.password||'',u.passwordHash))return res.status(401).json({message:'Invalid email or password'});if(u.active===false)return res.status(403).json({message:'This account is disabled. Please contact an administrator.'});res.json({token:tokenFor(u),user:safe(u)})}));
 app.get('/api/auth/me',auth,(req,res)=>res.json({user:safe(req.user)}));
-app.patch('/api/auth/me',auth,asyncRoute(async(req,res)=>{const allowed=['name','phone','college','department','course','semester','enrollmentId','photo','github','linkedin','portfolio','skills','bio'];for(const k of allowed)if(k in req.body)req.user[k]=req.body[k];await req.user.save();res.json({user:safe(req.user)})}));
+app.patch('/api/auth/me',auth,asyncRoute(async(req,res)=>{const allowed=['name','phone','college','department','course','semester','enrollmentId','group','year','photo','github','linkedin','portfolio','skills','bio'];for(const k of allowed)if(k in req.body)req.user[k]=req.body[k];await req.user.save();res.json({user:safe(req.user)})}));
 app.post('/api/auth/change-password',auth,asyncRoute(async(req,res)=>{if(!req.body.newPassword||req.body.newPassword.length<8)return res.status(400).json({message:'Password must be 8+ chars'});req.user.passwordHash=await bcrypt.hash(req.body.newPassword,12);await req.user.save();res.json({message:'Password changed'})}));
 app.post('/api/auth/reset/request',asyncRoute(async(req,res)=>{const u=await User.findOne({email:req.body.email?.toLowerCase()});if(!u)return res.json({message:'If the account exists, a reset link has been generated.'});u.passwordResetToken=crypto.randomBytes(24).toString('hex');u.passwordResetExpires=new Date(Date.now()+30*60*1000);await u.save();const base=process.env.FRONTEND_URL?.split(',')[0]||'http://localhost:5173';res.json({message:'Reset link generated.',resetUrl:`${base}/reset-password?token=${u.passwordResetToken}`})}));
 app.post('/api/auth/reset/confirm',asyncRoute(async(req,res)=>{const u=await User.findOne({passwordResetToken:req.body.token,passwordResetExpires:{$gt:new Date()}});if(!u)return res.status(400).json({message:'Reset link is invalid or expired'});if(!req.body.password||req.body.password.length<8)return res.status(400).json({message:'Password must be 8+ chars'});u.passwordHash=await bcrypt.hash(req.body.password,12);u.passwordResetToken=undefined;u.passwordResetExpires=undefined;await u.save();res.json({message:'Password reset successfully'})}));
 
 // AI service controls
-app.get('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();res.json({enabled:h?.settings?.aiEnabled!==false,enabledForEvent:Boolean(h)}); }));
-app.patch('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();if(!h)return res.status(404).json({message:'No active hackathon'});h.settings=h.settings||{};h.settings.aiEnabled=Boolean(req.body.enabled);await h.save();await audit(AuditLog,req.user,'UPDATE','AISettings',h._id,{enabled:h.settings.aiEnabled});res.json({enabled:h.settings.aiEnabled});}));
+app.get('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();res.json({enabled:h?.settings?.aiEnabled!==false,mode:h?.settings?.aiMode==='guidance'?'guidance':'full',enabledForEvent:Boolean(h),mailConfigured}); }));
+app.patch('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();if(!h)return res.status(404).json({message:'No active hackathon'});h.settings=h.settings||{};if(req.body.enabled!==undefined)h.settings.aiEnabled=Boolean(req.body.enabled);if(req.body.mode!==undefined){const mode=String(req.body.mode);if(!['full','guidance'].includes(mode))return res.status(400).json({message:'AI mode must be full or guidance.'});h.settings.aiMode=mode;}await h.save();await audit(AuditLog,req.user,'UPDATE','AISettings',h._id,{enabled:h.settings.aiEnabled,mode:h.settings.aiMode||'full'});res.json({enabled:h.settings.aiEnabled!==false,mode:h.settings.aiMode==='guidance'?'guidance':'full',mailConfigured});}));
 app.patch('/api/admin/events/:id/feature',auth,allow('admin'),asyncRoute(async(req,res)=>{const allowed=['payments','teams','submissions','judging','announcements','certificates','attendance'];const key=String(req.body?.key||'');if(!allowed.includes(key))return res.status(400).json({message:'Invalid event feature'});const h=await Hackathon.findById(req.params.id);if(!h)return res.status(404).json({message:'Hackathon not found'});h.settings=h.settings||{};h.settings.features=h.settings.features||{};h.settings.features[key]=Boolean(req.body.enabled);await h.save();await audit(AuditLog,req.user,'UPDATE','EventFeature',h._id,{key,enabled:h.settings.features[key]});res.json({key,enabled:h.settings.features[key]});}));
 
 // Events
@@ -66,13 +70,13 @@ app.delete('/api/hackathons/:id',auth,allow('admin'),asyncRoute(async(req,res)=>
 app.patch('/api/hackathons/:id/archive',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await Hackathon.findByIdAndUpdate(req.params.id,{status:'archived'},{returnDocument:'after'});if(!h)return res.status(404).json({message:'Hackathon not found'});res.json(h)}));
 app.patch('/api/hackathons/:id/activate',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await Hackathon.findById(req.params.id);if(!h)return res.status(404).json({message:'Hackathon not found'});await Hackathon.updateMany({_id:{$ne:h._id},status:{$nin:['closed','archived']}},{$set:{status:'closed'}});if(h.status==='closed'||h.status==='archived')h.status='draft';await h.save();res.json(h)}));
 app.post('/api/hackathons/:id/duplicate',auth,allow('admin'),asyncRoute(async(req,res)=>{const s=await Hackathon.findById(req.params.id);if(!s)return res.status(404).json({message:'Hackathon not found'});let slug=`${s.slug}-copy`,n=2;while(await Hackathon.exists({slug}))slug=`${s.slug}-copy-${n++}`;const c=s.toObject();delete c._id;delete c.createdAt;delete c.updatedAt;c.name=`${s.name} Copy`;c.slug=slug;c.status='draft';const h=await Hackathon.create(c);res.status(201).json(h)}));
-app.post('/api/admin/hackathons/:id/qr',auth,allow('admin'),upload.single('qr'),asyncRoute(async(req,res)=>{if(!req.file)return res.status(400).json({message:'QR image required'});const h=await Hackathon.findByIdAndUpdate(req.params.id,{upiQrUrl:`/uploads/${req.file.filename}`},{returnDocument:'after'});res.json(h)}));
+
 
 // Participants and roles
 app.get('/api/users/judges',auth,allow('admin'),asyncRoute(async(req,res)=>res.json(await User.find({role:'judge'}).select('name email active createdAt'))));
 app.post('/api/admin/judges',auth,allow('admin'),asyncRoute(async(req,res)=>{const {name,email,password}=req.body;if(!name||!email)return res.status(400).json({message:'Name and email required'});if(await User.exists({email:email.toLowerCase()}))return res.status(409).json({message:'Email already exists'});const u=await User.create({name,email:email.toLowerCase(),passwordHash:await bcrypt.hash(password||'Judge123!',12),role:'judge',attendanceToken:crypto.randomBytes(24).toString('base64url')});res.status(201).json(safe(u))}));
 app.get('/api/admin/participants',auth,allow('admin'),asyncRoute(async(req,res)=>{const q=(req.query.q||'').trim();const filter=q?{$or:[{name:new RegExp(q,'i')},{email:new RegExp(q,'i')},{enrollmentId:new RegExp(q,'i')}] }:{};res.json(await User.find(filter).select('-passwordHash -passwordResetToken -passwordResetExpires').sort({createdAt:-1}))}));
-app.post('/api/admin/participants',auth,allow('admin'),asyncRoute(async(req,res)=>{const {name,email,password,phone,college,department,course,semester,enrollmentId,role}=req.body;if(!name||!email||!password||password.length<8)return res.status(400).json({message:'Name, email and password (8+ chars) are required'});const normalizedEmail=email.toLowerCase().trim();if(await User.exists({email:normalizedEmail}))return res.status(409).json({message:'Email already registered'});const allowed=['participant','admin','finance','judge','mentor','volunteer'];const userRole=role&&allowed.includes(role)?role:'participant';const u=await User.create({name,email:normalizedEmail,passwordHash:await bcrypt.hash(password,12),phone,college,department,course,semester,enrollmentId,role:userRole,attendanceToken:crypto.randomBytes(24).toString('base64url')});await audit(AuditLog,req.user,'CREATE','User',u._id,{name:u.name,email:u.email,role:u.role});res.status(201).json(safe(u))}));
+app.post('/api/admin/participants',auth,allow('admin'),asyncRoute(async(req,res)=>{const {name,email,password,phone,college,department,course,semester,enrollmentId,group,year,role}=req.body;if(!name||!email||!password||password.length<8)return res.status(400).json({message:'Name, email and password (8+ chars) are required'});const normalizedEmail=email.toLowerCase().trim();if(await User.exists({email:normalizedEmail}))return res.status(409).json({message:'Email already registered'});const allowed=['participant','admin','finance','judge','mentor','volunteer'];const userRole=role&&allowed.includes(role)?role:'participant';const u=await User.create({name,email:normalizedEmail,passwordHash:await bcrypt.hash(password,12),phone,college,department,course,semester,enrollmentId,role:userRole,group,year,attendanceToken:crypto.randomBytes(24).toString('base64url')});await audit(AuditLog,req.user,'CREATE','User',u._id,{name:u.name,email:u.email,role:u.role});res.status(201).json(safe(u))}));
 app.delete('/api/admin/participants/:id',auth,allow('admin'),asyncRoute(async(req,res)=>{if(String(req.params.id)===String(req.user._id))return res.status(400).json({message:'You cannot remove your own account'});const u=await User.findById(req.params.id);if(!u)return res.status(404).json({message:'User not found'});if(u.role==='admin')return res.status(400).json({message:'Admin accounts cannot be removed here'});const ledTeams=await Team.find({leader:u._id});for(const team of ledTeams){team.members=team.members.filter(member=>String(member)!==String(u._id));if(team.members.length){team.leader=team.members[0];team.status=team.members.length>=3?'confirmed':'incomplete';await team.save();}else{await Team.findByIdAndDelete(team._id);}}await Team.updateMany({members:u._id},{$pull:{members:u._id}});await Invitation.deleteMany({$or:[{from:u._id},{to:u._id}]});await Attendance.deleteMany({user:u._id});await Certificate.deleteMany({user:u._id});await User.findByIdAndDelete(u._id);await audit(AuditLog,req.user,'DELETE','User',u._id,{name:u.name,email:u.email,role:u.role});res.json({message:'Participant removed'});}));
 app.patch('/api/admin/users/:id/role',auth,allow('admin'),asyncRoute(async(req,res)=>{const allowed=['participant','admin','finance','judge','mentor','volunteer'];if(!allowed.includes(req.body.role))return res.status(400).json({message:'Invalid role'});const u=await User.findByIdAndUpdate(req.params.id,{role:req.body.role},{returnDocument:'after'}).select('-passwordHash');if(!u)return res.status(404).json({message:'User not found'});res.json(u)}));
 app.patch('/api/admin/users/:id/status',auth,allow('admin'),asyncRoute(async(req,res)=>{const u=await User.findByIdAndUpdate(req.params.id,{active:Boolean(req.body.active)},{returnDocument:'after'}).select('-passwordHash');if(!u)return res.status(404).json({message:'User not found'});res.json(u)}));
@@ -83,13 +87,81 @@ app.post('/api/admin/roles',auth,allow('admin'),asyncRoute(async(req,res)=>res.s
 app.patch('/api/admin/roles/:id',auth,allow('admin'),asyncRoute(async(req,res)=>{const r=await Role.findByIdAndUpdate(req.params.id,{name:req.body.name,description:req.body.description,permissions:req.body.permissions||[]},{returnDocument:'after',runValidators:true});res.json(r)}));
 app.delete('/api/admin/roles/:id',auth,allow('admin'),asyncRoute(async(req,res)=>{const r=await Role.findById(req.params.id);if(!r)return res.status(404).json({message:'Role not found'});if(r.system)return res.status(400).json({message:'System roles cannot be deleted'});await r.deleteOne();res.json({message:'Role deleted'})}));
 
-// Payments
-app.post('/api/payments/proof',auth,upload.single('screenshot'),asyncRoute(async(req,res)=>{const h=await Hackathon.findById(req.body.hackathonId);if(!h)return res.status(404).json({message:'Hackathon not found'});if(!featureEnabled(h,'payments'))return res.status(503).json({message:'Registration payments are currently disabled by the administrator.'});if(h.registrationFee===0)return res.status(400).json({message:'This event has no registration fee; payment proof is not required.'});if(!req.file)return res.status(400).json({message:'Payment screenshot required'});const p=await Payment.create({hackathon:h._id,user:req.user._id,amount:h.registrationFee,utr:req.body.utr,screenshot:`/uploads/${req.file.filename}`});req.user.paymentStatus='pending';await req.user.save();res.status(201).json(p)}));
-app.get('/api/payments/mine',auth,asyncRoute(async(req,res)=>res.json(await Payment.find({user:req.user._id}).populate('hackathon','name registrationFee upiId upiName upiQrUrl'))));
-app.get('/api/admin/payments',auth,permission('payments.manage'),asyncRoute(async(req,res)=>res.json(await Payment.find().populate('user','name email enrollmentId').populate('hackathon','name').sort({createdAt:-1}))));
-app.patch('/api/admin/payments/:id',auth,permission('payments.manage'),asyncRoute(async(req,res)=>{const p=await Payment.findById(req.params.id);if(!p)return res.status(404).json({message:'Payment not found'});p.status=req.body.status;if(req.body.rejectionReason)p.rejectionReason=req.body.rejectionReason;p.reviewedBy=req.user._id;p.reviewedAt=new Date();await p.save();await User.findByIdAndUpdate(p.user,p.status==='paid'?{paymentStatus:'paid'}:{paymentStatus:'rejected'});res.json(p)}));
+// Razorpay helpers. The secret key stays server-side; the browser receives only the public key id.
+const razorpayConfigured=()=>Boolean(process.env.RAZORPAY_KEY_ID&&process.env.RAZORPAY_KEY_SECRET);
+const razorpayAuth=()=>Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString('base64');
+const razorpayRequest=async(pathname,{method='GET',body}={})=>{
+  if(!razorpayConfigured())throw new Error('Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to the server environment.');
+  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const r=await fetch(`https://api.razorpay.com/v1${pathname}`,{method,headers:{Authorization:`Basic ${razorpayAuth()}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});
+    const text=await r.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={message:text}};
+    if(!r.ok){const err=new Error(data?.error?.description||data?.message||`Razorpay request failed (${r.status})`);err.status=r.status;throw err;}
+    return data;
+  }finally{clearTimeout(timer)}
+};
+const safeSignatureEqual=(expected,actual)=>{const a=Buffer.from(String(expected||''));const b=Buffer.from(String(actual||''));return a.length===b.length&&crypto.timingSafeEqual(a,b);};
+const verifyRazorpaySignature=(orderId,paymentId,signature)=>safeSignatureEqual(crypto.createHmac('sha256',process.env.RAZORPAY_KEY_SECRET).update(`${orderId}|${paymentId}`).digest('hex'),signature);
+const markRazorpayPaid=async({orderId,paymentId,signature})=>{
+  const p=await Payment.findOne({razorpayOrderId:orderId,method:'razorpay'}); if(!p)throw new Error('Payment order not found');
+  if(!verifyRazorpaySignature(orderId,paymentId,signature))throw new Error('Invalid Razorpay payment signature');
+  const payment=await razorpayRequest(`/payments/${encodeURIComponent(paymentId)}`);
+  if(String(payment.order_id)!==String(orderId))throw new Error('Razorpay payment does not belong to this order');
+  p.razorpayPaymentId=paymentId; p.razorpaySignature=signature;
+  if(payment.status==='captured'||payment.captured===true){p.status='paid';p.reviewedAt=new Date();await p.save();await User.findByIdAndUpdate(p.user,{paymentStatus:'paid'});await notifyUsers([p.user],{hackathon:p.hackathon,title:'Payment successful',message:`Your Razorpay registration payment of ₹${p.amount.toLocaleString('en-IN')} was verified successfully.`,type:'success',link:'/dashboard/payment'});return {payment:p,razorpay:payment};}
+  await p.save(); return {payment:p,razorpay:payment};
+};
 
-const paid=async(uid,h)=>{if(h?.registrationFee===0)return true;const p=await Payment.findOne({hackathon:h._id,user:uid,status:'paid'}).select('_id');return Boolean(p)};
+app.get('/api/payments/razorpay/config',auth,asyncRoute(async(req,res)=>{
+  const h=await Hackathon.findById(req.query.hackathonId||''); if(!h)return res.status(404).json({message:'Hackathon not found'});
+  if(!featureEnabled(h,'payments'))return res.status(503).json({message:'Registration payments are currently disabled by the administrator.'});
+  if(h.registrationFee===0)return res.json({enabled:false,reason:'No registration fee'});
+  res.json({enabled:razorpayConfigured(),keyId:process.env.RAZORPAY_KEY_ID||'',currency:'INR',amount:h.registrationFee,name:h.name,description:`${h.name} registration`});
+}));
+
+app.post('/api/payments/razorpay/order',auth,asyncRoute(async(req,res)=>{
+  const h=await Hackathon.findById(req.body.hackathonId); if(!h)return res.status(404).json({message:'Hackathon not found'});
+  if(!featureEnabled(h,'payments'))return res.status(503).json({message:'Registration payments are currently disabled by the administrator.'});
+  if(h.registrationFee<=0)return res.status(400).json({message:'This event has no registration fee.'});
+  if(!razorpayConfigured())return res.status(503).json({message:'Online payment is not configured yet. Please contact the administrator.'});
+  if(await Payment.exists({hackathon:h._id,user:req.user._id,status:'paid'}))return res.status(409).json({message:'Your registration payment is already approved.'});
+  const existing=await Payment.findOne({hackathon:h._id,user:req.user._id,method:'razorpay',status:'pending',amount:h.registrationFee,razorpayOrderId:{$exists:true}}).sort({createdAt:-1});
+  if(existing){return res.json({orderId:existing.razorpayOrderId,amount:existing.amount,currency:'INR',keyId:process.env.RAZORPAY_KEY_ID,name:h.name,description:`${h.name} registration`,prefill:{name:req.user.name,email:req.user.email,contact:req.user.phone||''}})}
+  const receipt=`BC-${String(req.user._id).slice(-8)}-${Date.now().toString(36)}`.slice(0,40);
+  const order=await razorpayRequest('/orders',{method:'POST',body:{amount:Math.round(Number(h.registrationFee)*100),currency:'INR',receipt,partial_payment:false,notes:{hackathonId:String(h._id),userId:String(req.user._id),email:req.user.email}}});
+  await Payment.create({hackathon:h._id,user:req.user._id,amount:h.registrationFee,method:'razorpay',razorpayOrderId:order.id,status:'pending'});
+  req.user.paymentStatus='pending'; await req.user.save();
+  res.status(201).json({orderId:order.id,amount:h.registrationFee,currency:'INR',keyId:process.env.RAZORPAY_KEY_ID,name:h.name,description:`${h.name} registration`,prefill:{name:req.user.name,email:req.user.email,contact:req.user.phone||''}});
+}));
+
+app.post('/api/payments/razorpay/verify',auth,asyncRoute(async(req,res)=>{
+  const {razorpay_order_id,razorpay_payment_id,razorpay_signature}=req.body||{};
+  if(!razorpay_order_id||!razorpay_payment_id||!razorpay_signature)return res.status(400).json({message:'Incomplete Razorpay payment response.'});
+  const p=await Payment.findOne({razorpayOrderId:razorpay_order_id,user:req.user._id}); if(!p)return res.status(404).json({message:'Payment order not found for this account.'});
+  try{const result=await markRazorpayPaid({orderId:razorpay_order_id,paymentId:razorpay_payment_id,signature:razorpay_signature});res.json({ok:true,status:result.payment.status,message:result.payment.status==='paid'?'Payment verified successfully.':'Payment received and awaiting capture.'});}
+  catch(e){p.status='failed';p.rejectionReason=e.message;await p.save().catch(()=>{});res.status(400).json({message:e.message||'Payment verification failed.'});}
+}));
+
+app.post('/api/payments/razorpay/webhook',asyncRoute(async(req,res)=>{
+  const secret=process.env.RAZORPAY_WEBHOOK_SECRET;
+  if(!secret)return res.status(503).json({message:'Razorpay webhook secret is not configured.'});
+  const signature=req.headers['x-razorpay-signature'];
+  const expected=crypto.createHmac('sha256',secret).update(req.rawBody||Buffer.from(JSON.stringify(req.body||{}))).digest('hex');
+  if(!signature||!safeSignatureEqual(expected,signature))return res.status(401).json({message:'Invalid webhook signature'});
+  const event=req.body||{};
+  const entity=event.payload?.payment?.entity||event.payload?.order?.entity;
+  const orderId=entity?.order_id||entity?.id;
+  if(event.event==='payment.captured'&&entity?.id&&orderId){try{const p=await Payment.findOne({razorpayOrderId:orderId});if(p){p.razorpayPaymentId=entity.id;p.status='paid';p.reviewedAt=new Date();await p.save();await User.findByIdAndUpdate(p.user,{paymentStatus:'paid'});}}catch(e){console.error('Razorpay webhook processing failed:',e.message)}}
+  if(event.event==='payment.failed'&&orderId){const p=await Payment.findOne({razorpayOrderId:orderId});if(p&&p.status!=='paid'){p.status='failed';p.rejectionReason=entity?.error_description||'Razorpay payment failed';await p.save();}}
+  res.json({ok:true});
+}));
+
+// Razorpay payments only. Manual UPI / payment-proof approval is intentionally removed.
+app.get('/api/payments/mine',auth,asyncRoute(async(req,res)=>res.json(await Payment.find({user:req.user._id,method:'razorpay'}).populate('hackathon','name registrationFee').sort({createdAt:-1}))));
+app.get('/api/admin/payments',auth,permission('payments.manage'),asyncRoute(async(req,res)=>res.json(await Payment.find({method:'razorpay'}).populate('user','name email enrollmentId').populate('hackathon','name').sort({createdAt:-1}))));
+app.post('/api/admin/payments/:id/sync',auth,permission('payments.manage'),asyncRoute(async(req,res)=>{const p=await Payment.findOne({_id:req.params.id,method:'razorpay'});if(!p)return res.status(404).json({message:'Razorpay payment not found'});if(!p.razorpayPaymentId)return res.status(400).json({message:'Razorpay payment id is not available yet.'});const payment=await razorpayRequest(`/payments/${encodeURIComponent(p.razorpayPaymentId)}`);if(String(payment.order_id)!==String(p.razorpayOrderId))return res.status(400).json({message:'Razorpay order mismatch.'});if(payment.status==='captured'||payment.captured===true){p.status='paid';p.reviewedAt=new Date();await p.save();await User.findByIdAndUpdate(p.user,{paymentStatus:'paid'});}else if(payment.status==='failed'){p.status='failed';p.rejectionReason=payment.error_description||'Razorpay payment failed';await p.save();}res.json({status:p.status,razorpayStatus:payment.status});}));
+
+const paid=async(uid,h)=>{if(h?.registrationFee===0)return true;const p=await Payment.findOne({hackathon:h._id,user:uid,method:'razorpay',status:'paid'}).select('_id');return Boolean(p)};
 const featureEnabled=(h,key)=>h?.settings?.features?.[key]!==false;
 // Teams
 app.get('/api/teams/mine',auth,asyncRoute(async(req,res)=>res.json(await Team.find({members:req.user._id}).populate('members','name email enrollmentId paymentStatus role').populate('problem','code title'))));
@@ -214,7 +286,10 @@ app.get('/api/attendance/credential',auth,allow('participant'),asyncRoute(async(
   const token=await ensureAttendanceToken(req.user); res.json({event:{id:h._id,name:h.name},qrValue:`BITEATT:${token}`});
 }));
 app.post('/api/attendance/scan',auth,allow('admin','judge','mentor','volunteer'),asyncRoute(async(req,res)=>{
-  const h=await Hackathon.findById(req.body?.hackathonId||req.body?.eventId)||await current(); if(!h)return res.status(404).json({message:'Hackathon not found'});
+  const requestedHackathonId=String(req.body?.hackathonId||req.body?.eventId||'').trim();
+  if(requestedHackathonId && !isValidObjectId(requestedHackathonId))return res.status(400).json({message:'Invalid hackathon id.'});
+  const h=requestedHackathonId?await Hackathon.findById(requestedHackathonId):await current();
+  if(!h)return res.status(404).json({message:'Hackathon not found'});
   if(h.settings?.features?.attendance===false)return res.status(503).json({message:'Attendance is currently disabled for this event.'});
   const raw=String(req.body?.qrValue||req.body?.token||'').trim(); const token=raw.replace(/^BITEATT:/i,''); if(!token)return res.status(400).json({message:'Scan a participant attendance QR code.'});
   const u=await User.findOne({attendanceToken:token,role:'participant',active:true}); if(!u)return res.status(404).json({message:'Invalid or inactive participant QR code.'});
@@ -232,9 +307,63 @@ app.post('/api/attendance/scan',auth,allow('admin','judge','mentor','volunteer')
 app.post('/api/admin/announcements',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await Hackathon.findById(req.body.hackathon);if(!h)return res.status(404).json({message:'Hackathon not found'});if(!featureEnabled(h,'announcements'))return res.status(503).json({message:'Announcements are disabled for this event.'});res.status(201).json(await Announcement.create({...req.body,createdBy:req.user._id}))}));
 app.post('/api/tickets',auth,asyncRoute(async(req,res)=>res.status(201).json(await Ticket.create({...req.body,user:req.user._id})))); app.get('/api/tickets/mine',auth,asyncRoute(async(req,res)=>res.json(await Ticket.find({user:req.user._id}).sort({createdAt:-1})))); app.get('/api/admin/tickets',auth,allow('admin','volunteer'),asyncRoute(async(req,res)=>res.json(await Ticket.find().populate('user','name email').sort({createdAt:-1}))));
 app.post('/api/votes',auth,asyncRoute(async(req,res)=>{const h=await Hackathon.findById(req.body.hackathonId);if(!h?.settings?.peopleChoice)return res.status(400).json({message:'People’s Choice is disabled'});if(await Vote.exists({hackathon:h._id,user:req.user._id}))return res.status(409).json({message:'You have already voted'});res.status(201).json(await Vote.create({hackathon:h._id,user:req.user._id,team:req.body.teamId}))}));
-app.get('/api/admin/attendance',auth,allow('admin','judge','mentor','volunteer'),asyncRoute(async(req,res)=>{const h=await Hackathon.findById(req.query.hackathonId||'');const filter=req.query.hackathonId?{hackathon:req.query.hackathonId}:{hackathon:(await current())?._id};if(req.user.role!=='admin'&&!h)return res.status(404).json({message:'Event not found'});res.json(await Attendance.find(filter).populate('user','name email enrollmentId college').populate('scannedBy','name role').populate('hackathon','name').sort({at:-1}).limit(2000))}));
+app.get('/api/admin/attendance',auth,allow('admin','judge','mentor','volunteer'),asyncRoute(async(req,res)=>{
+  // Never pass an empty/invalid query value into findById().
+  const requestedHackathonId=String(req.query.hackathonId||'').trim();
+  if(requestedHackathonId && !isValidObjectId(requestedHackathonId))
+    return res.status(400).json({message:'Invalid hackathon id.'});
+
+  const h=requestedHackathonId?await Hackathon.findById(requestedHackathonId):await current();
+  if(!h)return res.status(404).json({message:'Event not found'});
+
+  const filter={hackathon:h._id};
+  const userFilter={role:'participant'};
+  if(req.query.department)userFilter.department=String(req.query.department).trim();
+  if(req.query.group)userFilter.group=String(req.query.group).trim();
+  if(req.query.year)userFilter.year=String(req.query.year).trim();
+  const userIds=await User.find(userFilter).distinct('_id');
+  filter.user={$in:userIds};
+
+  // Avoid Mongoose populate CastErrors from any legacy malformed reference.
+  const rawRows=await Attendance.find(filter).sort({at:-1}).limit(5000).lean();
+  const validUserIds=[...new Set(rawRows.map(x=>String(x.user||'')).filter(isValidObjectId))];
+  const validScannerIds=[...new Set(rawRows.map(x=>String(x.scannedBy||'')).filter(isValidObjectId))];
+  const [users,scanners]=await Promise.all([
+    User.find({_id:{$in:validUserIds}}).select('name email enrollmentId college department group year').lean(),
+    User.find({_id:{$in:validScannerIds}}).select('name role').lean()
+  ]);
+  const usersById=new Map(users.map(x=>[String(x._id),x]));
+  const scannersById=new Map(scanners.map(x=>[String(x._id),x]));
+  res.json(rawRows.map(row=>({...row,user:usersById.get(String(row.user||''))||null,scannedBy:scannersById.get(String(row.scannedBy||''))||null,hackathon:{_id:h._id,name:h.name}})));
+}));
+
 app.post('/api/admin/attendance',auth,allow('admin'),asyncRoute(async(req,res)=>{const u=await User.findOne({email:req.body.email?.toLowerCase().trim(),role:'participant',active:true});if(!u)return res.status(404).json({message:'Eligible participant not found'});const h=await Hackathon.findById(req.body.hackathonId);if(!h)return res.status(404).json({message:'Hackathon not found'});const type=['entry','exit','workshop','mentor','presentation'].includes(String(req.body.type))?String(req.body.type):'entry';if(type==='entry'&&await Attendance.exists({hackathon:h._id,user:u._id,type:'entry'}))return res.status(409).json({message:'Participant is already checked in.'});const record=await Attendance.create({hackathon:h._id,user:u._id,type,at:req.body.at?new Date(req.body.at):new Date(),scannedBy:req.user._id});await audit(AuditLog,req.user,'MANUAL_ATTENDANCE','Attendance',record._id,{participant:u._id,event:h._id,type});res.status(201).json(await record.populate([{path:'user',select:'name email enrollmentId'},{path:'scannedBy',select:'name role'}]))}));
 app.delete('/api/admin/attendance/:id',auth,allow('admin'),asyncRoute(async(req,res)=>{const record=await Attendance.findByIdAndDelete(req.params.id);if(!record)return res.status(404).json({message:'Attendance record not found'});await audit(AuditLog,req.user,'DELETE','Attendance',record._id,{participant:record.user,event:record.hackathon,type:record.type});res.json({message:'Attendance record deleted'})}));
+app.get('/api/admin/ranking',auth,allow('admin'),asyncRoute(async(req,res)=>{
+  const h=req.query.hackathonId?await Hackathon.findById(req.query.hackathonId):await current(); if(!h)return res.status(404).json({message:'Hackathon not found'});
+  const rows=await Evaluation.aggregate([
+    {$match:{hackathon:h._id,submitted:true}},
+    {$group:{_id:'$team',score:{$avg:'$total'},evaluations:{$sum:1}}},
+    {$sort:{score:-1,_id:1}},{$limit:200},
+    {$lookup:{from:'teams',localField:'_id',foreignField:'_id',as:'team'}},{$unwind:{path:'$team',preserveNullAndEmptyArrays:true}},
+    {$lookup:{from:'users',localField:'team.members',foreignField:'_id',as:'members'}},
+    {$project:{_id:1,score:{$round:['$score',2]},evaluations:1,team:{_id:'$team._id',name:'$team.name',code:'$team.code'},members:{_id:1,name:1,email:1,enrollmentId:1}}}
+  ]);
+  let lastScore=null,rank=0; const out=rows.map((x,i)=>{if(lastScore===null||x.score!==lastScore)rank=i+1;lastScore=x.score;return {...x,rank}});
+  res.json(out);
+}));
+app.post('/api/admin/certificates/auto-issue',auth,allow('admin'),asyncRoute(async(req,res)=>{
+  const h=req.body?.hackathonId?await Hackathon.findById(req.body.hackathonId):await current(); if(!h)return res.status(404).json({message:'Hackathon not found'}); if(h.settings?.features?.certificates===false)return res.status(503).json({message:'Certificates are disabled for this event.'});
+  const rankings=await Evaluation.aggregate([{$match:{hackathon:h._id,submitted:true}},{$group:{_id:'$team',score:{$avg:'$total'}}},{$sort:{score:-1,_id:1}},{$limit:2},{$lookup:{from:'teams',localField:'_id',foreignField:'_id',as:'team'}},{$unwind:'$team'}]);
+  const winnerIds=new Set((rankings[0]?.team?.members||[]).map(String)); const runnerIds=new Set((rankings[1]?.team?.members||[]).map(String));
+  const participants=await User.find({role:'participant',active:{$ne:false}}).select('_id name email college enrollmentId department group year');
+  const defaults={organizerName:h.college||h.name||'Hackathon Organizer',organizerLocation:h.venue||'',established:'',title:'CERTIFICATE',subtitle:'OF ACHIEVEMENT',body:`For outstanding participation and contribution in ${h.name}.`,achievementLabel:'This certificate is proudly presented to',track:'',signatureName:'Event Organizer',signatureTitle:'Organizer',logoUrl:h.logoUrl||'',primaryColor:'#243b86',accentColor:'#c7a45b'};
+  let created=0,skipped=0;
+  for(const u of participants){const type=winnerIds.has(String(u._id))?'Winner':runnerIds.has(String(u._id))?'Runner-up':'Participation';if(await Certificate.exists({hackathon:h._id,user:u._id,type})){skipped++;continue;}await Certificate.create({hackathon:h._id,user:u._id,type,certificateId:certId(),template:defaults});created++;}
+  await audit(AuditLog,req.user,'AUTO_ISSUE','Certificates',h._id,{created,skipped,winnerCount:winnerIds.size,runnerUpCount:runnerIds.size});
+  res.json({created,skipped,winnerCount:winnerIds.size,runnerUpCount:runnerIds.size});
+}));
+
 app.get('/api/certificates/mine',auth,asyncRoute(async(req,res)=>res.json(await Certificate.find({user:req.user._id}).populate('hackathon','name').sort({issuedAt:-1}))));
 app.get('/api/admin/certificates',auth,allow('admin'),asyncRoute(async(req,res)=>{const filter=req.query.hackathonId?{hackathon:req.query.hackathonId}:{};res.json(await Certificate.find(filter).populate('user','name email enrollmentId').populate('hackathon','name').sort({issuedAt:-1}))}));
 app.post('/api/admin/certificates',auth,allow('admin'),asyncRoute(async(req,res)=>{const {hackathon,user,type,fileUrl,template}=req.body;if(!hackathon||!user||!type)return res.status(400).json({message:'Hackathon, participant and certificate type are required'});const [h,u]=await Promise.all([Hackathon.findById(hackathon),User.findById(user)]);if(!h)return res.status(404).json({message:'Hackathon not found'});if(!featureEnabled(h,'certificates'))return res.status(503).json({message:'Certificates are disabled for this event.'});if(!u||u.role!=='participant'||u.active===false)return res.status(404).json({message:'Eligible participant not found'});const existing=await Certificate.findOne({hackathon:h._id,user:u._id,type});if(existing)return res.status(409).json({message:'This certificate already exists for the participant'});const defaults={organizerName:h.college||h.name||'Hackathon Organizer',organizerLocation:h.venue||'',established:'',title:'CERTIFICATE',subtitle:'OF ACHIEVEMENT',body:`For outstanding participation and contribution in ${h.name}.`,achievementLabel:'This certificate is proudly presented to',track:'',signatureName:'Event Organizer',signatureTitle:'Organizer',logoUrl:h.logoUrl||'',primaryColor:'#243b86',accentColor:'#c7a45b'};const cleanTemplate={...defaults,...(template||{})};const c=await Certificate.create({hackathon:h._id,user:u._id,type,fileUrl,certificateId:certId(),template:cleanTemplate});await audit(AuditLog,req.user,'CREATE','Certificate',c._id,{certificateId:c.certificateId,user:u._id,type});res.status(201).json(await c.populate([{path:'user',select:'name email enrollmentId college'},{path:'hackathon',select:'name college venue logoUrl'}]))}));
@@ -263,6 +392,46 @@ const eventPhase = h => {
   return upcoming?{key:upcoming[0],label:upcoming[1]}:{key:'setup',label:'Setup'};
 };
 const notifyUsers=async(users,doc)=>{const ids=[...new Set(users.map(x=>String(x)).filter(Boolean))];if(!ids.length)return;await Notification.insertMany(ids.map(user=>({...doc,user})),{ordered:false});};
+
+// Feedback: category is always derived from the authenticated role; the client cannot choose another category.
+const feedbackRoles=new Set(['participant','judge','mentor','volunteer','admin']);
+app.get('/api/feedback/mine',auth,asyncRoute(async(req,res)=>{
+  if(!feedbackRoles.has(req.user.role))return res.status(403).json({message:'This account is not allowed to submit feedback.'});
+  const rows=await Feedback.find({from:req.user._id}).populate('hackathon','name').sort({createdAt:-1}).limit(100).lean();
+  res.json(rows);
+}));
+app.post('/api/feedback',auth,asyncRoute(async(req,res)=>{
+  if(!feedbackRoles.has(req.user.role))return res.status(403).json({message:'This account is not allowed to submit feedback.'});
+  const message=String(req.body?.message||'').trim();
+  if(message.length<3) return res.status(400).json({message:'Feedback must contain at least 3 characters.'});
+  const category=req.user.role;
+  const h=req.body?.hackathonId?await Hackathon.findById(req.body.hackathonId):await current();
+  const rating=req.body?.rating==null?undefined:Number(req.body.rating);
+  if(rating!=null&&(!Number.isFinite(rating)||rating<1||rating>5))return res.status(400).json({message:'Rating must be between 1 and 5.'});
+  const row=await Feedback.create({hackathon:h?._id,from:req.user._id,fromRole:req.user.role,category,rating,message,anonymousToUsers:Boolean(req.body?.anonymousToUsers)});
+  // Feedback is saved first. Notifications/email are secondary and must never
+  // turn a successful feedback submission into a false failure.
+  if(h){
+    try{
+      const admins=await User.find({role:'admin',active:{$ne:false}}).distinct('_id');
+      await notifyUsers(admins,{hackathon:h._id,title:'New feedback received',message:`New ${category} feedback was submitted by ${req.user.name}.`,type:'info',link:'/admin/feedback'});
+    }catch(error){
+      console.error('Feedback notification failed:',error.message);
+    }
+  }
+  // Email is intentionally non-blocking so Gmail outages never slow or fail feedback submission.
+  try{
+    void sendFeedbackConfirmation({to:req.user.email,name:req.user.name,category,rating,message,eventName:h?.name}).catch(error=>console.error('Feedback email failed:',error.message));
+  }catch(error){
+    console.error('Feedback email setup failed:',error.message);
+  }
+  res.status(201).json(await row.populate([{path:'hackathon',select:'name'},{path:'from',select:'name email role'}]));
+}));
+app.get('/api/admin/feedback',auth,allow('admin'),asyncRoute(async(req,res)=>{
+  const filter={}; if(req.query.hackathonId)filter.hackathon=req.query.hackathonId; if(req.query.category)filter.category=req.query.category;
+  const rows=await Feedback.find(filter).populate('from','name email role department group year enrollmentId').populate('hackathon','name').sort({createdAt:-1}).limit(500).lean();
+  res.json(rows);
+}));
 
 app.get('/api/notifications/mine',auth,asyncRoute(async(req,res)=>{
   const rows=await Notification.find({user:req.user._id}).sort({createdAt:-1}).limit(50).lean();
@@ -295,7 +464,7 @@ app.get('/api/admin/operations',auth,allow('admin'),asyncRoute(async(req,res)=>{
   const assignedTeams=await JudgeAssignment.find({hackathon:id}).distinct('team');
   const unassigned=Math.max(0,submissions-(new Set(assignedTeams.map(String)).size));
   const phase=eventPhase(h);
-  res.json({event:{id:h._id,name:h.name,status:h.status,phase,dates:{registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt}},features:{ai:h.settings?.aiEnabled!==false,compiler:h.settings?.compilerEnabled!==false,...(h.settings?.features||{})},metrics:{participants,paid,teams,confirmedTeams,submissions,judges,assignments,completedEvaluations,publishedProblems,pendingPayments,checkedIn,unassignedTeams:unassigned,audit24h:unreadAudit},health:{database:mongoose.connection.readyState===1,judgeService:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),jwtConfigured:Boolean(process.env.JWT_SECRET)}});
+  res.json({event:{id:h._id,name:h.name,status:h.status,phase,dates:{registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt}},features:{ai:h.settings?.aiEnabled!==false,compiler:h.settings?.compilerEnabled!==false,...(h.settings?.features||{})},metrics:{participants,paid,teams,confirmedTeams,submissions,judges,assignments,completedEvaluations,publishedProblems,pendingPayments,checkedIn,unassignedTeams:unassigned,audit24h:unreadAudit},health:{database:mongoose.connection.readyState===1,judgeService:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),jwtConfigured:Boolean(process.env.JWT_SECRET),ai:Boolean(process.env.OPENROUTER_API_KEY),gmail:mailConfigured()}});
 }));
 
 app.post('/api/admin/judges/auto-assign',auth,allow('admin'),asyncRoute(async(req,res)=>{
@@ -324,7 +493,7 @@ app.post('/api/admin/judges/auto-assign',auth,allow('admin'),asyncRoute(async(re
 app.get('/api/admin/roles/:name',auth,allow('admin'),asyncRoute(async(req,res)=>{const r=await Role.findOne({name:req.params.name});if(!r)return res.status(404).json({message:'Role not found'});res.json(r);}));
 app.patch('/api/admin/roles/:name',auth,allow('admin'),asyncRoute(async(req,res)=>{const r=await Role.findOne({name:req.params.name});if(!r)return res.status(404).json({message:'Role not found'});if(r.system===true&&req.params.name==='admin')return res.status(400).json({message:'The admin role is protected.'});if(Array.isArray(req.body.permissions))r.permissions=[...new Set(req.body.permissions.map(String))];if(req.body.description!=null)r.description=String(req.body.description);await r.save();await audit(AuditLog,req.user,'UPDATE','Role',r._id,{name:r.name,permissions:r.permissions});res.json(r);}));
 
-app.get('/api/admin/health',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();res.json({ok:mongoose.connection.readyState===1,event:Boolean(h),timestamp:new Date().toISOString(),services:{mongo:mongoose.connection.readyState===1,judge0:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),ai:Boolean(process.env.OPENROUTER_API_KEY||process.env.AI_API_KEY||process.env.OPENAI_API_KEY||process.env.GEMINI_API_KEY),uploads:fs.existsSync(path.resolve(uploadDir))}});}));
+app.get('/api/admin/health',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();res.json({ok:mongoose.connection.readyState===1,event:Boolean(h),timestamp:new Date().toISOString(),services:{mongo:mongoose.connection.readyState===1,judge0:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),ai:Boolean(process.env.OPENROUTER_API_KEY),gmail:mailConfigured(),uploads:fs.existsSync(path.resolve(uploadDir))}});}));
 
 // Final-phase operational APIs
 const csvEscape=value=>{const s=String(value??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s};
@@ -349,20 +518,29 @@ app.get('/api/notifications/unread-count',auth,asyncRoute(async(req,res)=>{res.j
 
 app.get('/api/admin/export/:type',auth,allow('admin'),asyncRoute(async(req,res)=>{
   const h=await current(); if(!h)return res.status(404).json({message:'No active hackathon'}); const type=String(req.params.type);
-  if(type==='participants'){const rows=await User.find({role:'participant'}).select('name email phone college department course semester enrollmentId paymentStatus active createdAt').lean();return sendCsv(res,'participants.csv',['Name','Email','Phone','College','Department','Course','Semester','Enrollment ID','Payment Status','Active','Created'],rows.map(x=>[x.name,x.email,x.phone,x.college,x.department,x.course,x.semester,x.enrollmentId,x.paymentStatus,x.active,x.createdAt]));}
+  if(type==='participants'){const rows=await User.find({role:'participant'}).select('name email phone college department course semester group year enrollmentId paymentStatus active createdAt').lean();return sendCsv(res,'participants.csv',['Name','Email','Phone','College','Department','Course','Semester','Group','Year','Enrollment ID','Payment Status','Active','Created'],rows.map(x=>[x.name,x.email,x.phone,x.college,x.department,x.course,x.semester,x.group,x.year,x.enrollmentId,x.paymentStatus,x.active,x.createdAt]));}
   if(type==='teams'){const rows=await Team.find({hackathon:h._id}).populate('leader','name email').populate('members','name email').populate('problem','code title').lean();return sendCsv(res,'teams.csv',['Team','Code','Leader','Leader Email','Members','Problem','Status','Created'],rows.map(x=>[x.name,x.code,x.leader?.name,x.leader?.email,(x.members||[]).map(m=>m.name).join(' | '),x.problem?`${x.problem.code} - ${x.problem.title}`:'',x.status,x.createdAt]));}
   if(type==='submissions'){const rows=await CodeSubmission.find({hackathon:h._id,mode:'submit'}).populate('user','name email').populate('team','name code').populate('problem','code title').lean();return sendCsv(res,'code-submissions.csv',['Participant','Email','Team','Problem','Language','Status','Score','Passed','Total Tests','Created'],rows.map(x=>[x.user?.name,x.user?.email,x.team?.name,x.problem?`${x.problem.code} - ${x.problem.title}`:'',x.language,x.status,x.score,x.passed,x.totalTests,x.createdAt]));}
   if(type==='evaluations'){const rows=await Evaluation.find({submitted:true}).populate('judge','name email').populate('team','name').lean();const teamIds=await Team.find({hackathon:h._id}).distinct('_id');const set=new Set(teamIds.map(String));return sendCsv(res,'evaluations.csv',['Judge','Judge Email','Team','Total','Comments','Submitted'],rows.filter(x=>set.has(String(x.team?._id||x.team))).map(x=>[x.judge?.name,x.judge?.email,x.team?.name,x.total,x.comments,x.submittedAt]));}
   if(type==='certificates'){const rows=await Certificate.find({hackathon:h._id}).populate('user','name email enrollmentId').lean();return sendCsv(res,'certificates.csv',['Participant','Email','Enrollment ID','Type','Certificate ID','Issued'],rows.map(x=>[x.user?.name,x.user?.email,x.user?.enrollmentId,x.type,x.certificateId,x.issuedAt]));}
-   if(type==='attendance'){const rows=await Attendance.find({hackathon:h._id}).populate('user','name email enrollmentId').populate('scannedBy','name role').sort({at:1}).lean();return sendCsv(res,'attendance.csv',['Participant','Email','Enrollment ID','Type','Status','Time','Marked By','Scanner Role'],rows.map(x=>[x.user?.name,x.user?.email,x.user?.enrollmentId,x.type,x.type==='entry'?'Present':'Recorded',x.at,x.scannedBy?.name,x.scannedBy?.role]));}
+   if(type==='feedback'){const rows=await Feedback.find({hackathon:h._id}).populate('from','name email role department group year').sort({createdAt:1}).lean();return sendCsv(res,'feedback.csv',['From','Email','Role','Category','Rating','Department','Group','Year','Message','Created'],rows.map(x=>[x.from?.name,x.from?.email,x.from?.role,x.category,x.rating,x.from?.department,x.from?.group,x.from?.year,x.message,x.createdAt]));}
+  if(type==='attendance'){const userFilter={role:'participant'};if(req.query.department)userFilter.department=String(req.query.department).trim();if(req.query.group)userFilter.group=String(req.query.group).trim();if(req.query.year)userFilter.year=String(req.query.year).trim();const ids=await User.find(userFilter).distinct('_id');const rows=await Attendance.find({hackathon:h._id,user:{$in:ids}}).sort({at:1}).lean();const userIds=[...new Set(rows.map(x=>String(x.user||'')).filter(isValidObjectId))];const scannerIds=[...new Set(rows.map(x=>String(x.scannedBy||'')).filter(isValidObjectId))];const [users,scanners]=await Promise.all([User.find({_id:{$in:userIds}}).select('name email enrollmentId department group year college').lean(),User.find({_id:{$in:scannerIds}}).select('name role').lean()]);const usersById=new Map(users.map(x=>[String(x._id),x]));const scannersById=new Map(scanners.map(x=>[String(x._id),x]));return sendCsv(res,'attendance.csv',['Participant','Email','Enrollment ID','Department','Group','Year','Type','Status','Time','Marked By','Scanner Role'],rows.map(x=>{const u=usersById.get(String(x.user||''));const scanner=scannersById.get(String(x.scannedBy||''));return [u?.name,u?.email,u?.enrollmentId,u?.department,u?.group,u?.year,x.type,x.type==='entry'?'Present':'Recorded',x.at,scanner?.name,scanner?.role]}));}
   return res.status(400).json({message:'Unknown export type. Use participants, teams, submissions, evaluations, certificates or attendance.'});
 }));
 
 
+app.use('/api', (req,res,next)=>{
+  if(res.headersSent) return next();
+  res.status(404).json({message:'API endpoint not found.',method:req.method,path:req.originalUrl});
+});
+
 app.use((err,req,res,next)=>{console.error(err);if(err?.name==='CastError')return res.status(400).json({message:`Invalid ${err.path||'identifier'}.`});if(err?.code===11000)return res.status(409).json({message:'A record with these details already exists.'});if(err?.name==='ValidationError')return res.status(400).json({message:Object.values(err.errors||{}).map(x=>x.message).join('; ')||'Validation failed.'});res.status(err.status||500).json({message:err.message||'Server error'});});
 function configureMongoDns(){
-  const configured=process.env.MONGODB_DNS_SERVERS?.split(',').map(x=>x.trim()).filter(Boolean);
-  if(!configured?.length) return;
+  const raw=process.env.MONGODB_DNS_SERVERS?.split(',').map(x=>x.trim()).filter(Boolean)||[];
+  const configured=raw.filter(value=>net.isIP(value));
+  const invalid=raw.filter(value=>!net.isIP(value));
+  if(invalid.length) console.warn(`Ignoring invalid MONGODB_DNS_SERVERS value(s): ${invalid.join(', ')}`);
+  if(!configured.length) return;
   try{
     dns.setServers(configured);
     console.log(`MongoDB DNS servers: ${configured.join(', ')}`);
@@ -383,10 +561,9 @@ function mongoConnectionString(){
   // Prefer an explicitly configured fallback, otherwise use the hosts for
   // the BiteCode Atlas cluster used by this project. This keeps the app
   // usable even when _mongodb._tcp SRV resolution is unavailable.
-  const fallbackHosts=(process.env.MONGODB_FALLBACK_HOSTS?.trim() ||
-    'ac-m1qsbpv-shard-00-00.bikna6v.mongodb.net:27017,ac-m1qsbpv-shard-00-01.bikna6v.mongodb.net:27017,ac-m1qsbpv-shard-00-02.bikna6v.mongodb.net:27017');
-
-  const replicaSet=(process.env.MONGODB_REPLICA_SET?.trim() || 'atlas-gkqon1-shard-0');
+  const fallbackHosts=process.env.MONGODB_FALLBACK_HOSTS?.trim();
+  if(!fallbackHosts) return raw;
+  const replicaSet=process.env.MONGODB_REPLICA_SET?.trim();
   try{
     const u=new URL(raw);
     const params=new URLSearchParams(u.search);
@@ -412,7 +589,7 @@ async function ensureDemoCodingProblem(){
   if(String(process.env.AUTO_SEED||'true').toLowerCase()==='false') return;
   let h=await Hackathon.findOne({status:{$nin:['closed','archived']}}).sort({createdAt:-1});
   if(!h){
-    h=await Hackathon.create({name:'BiteCode 2026',slug:`bitecode-${Date.now()}`,description:'A practical coding and product hackathon.',college:'BiteCode',venue:'Lab / Hybrid',registrationFee:0,teamMin:1,teamMax:5,status:'registration',tracks:['AI & Automation','Developer Tools'],settings:{aiEnabled:true,compilerEnabled:true}});
+    h=await Hackathon.create({name:'BiteCode 2026',slug:`bitecode-${Date.now()}`,description:'A practical coding and product hackathon.',college:'BiteCode',venue:'Lab / Hybrid',registrationFee:0,teamMin:1,teamMax:5,status:'registration',tracks:['AI & Automation','Developer Tools'],settings:{aiEnabled:true,aiMode:'full',compilerEnabled:true}});
     console.log('Created a default active hackathon for first run.');
   }
   const count=await Problem.countDocuments({hackathon:h._id,published:true});

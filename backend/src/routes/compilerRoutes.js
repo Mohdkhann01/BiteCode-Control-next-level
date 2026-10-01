@@ -21,17 +21,22 @@ const LANGUAGE_IDS = {
 const LANGUAGE_NAMES = {python:"Python",javascript:"JavaScript",c:"C",cpp:"C++",java:"Java",csharp:"C#",go:"Go",rust:"Rust",php:"PHP",ruby:"Ruby",kotlin:"Kotlin"};
 const headers = () => ({"Content-Type":"application/json", ...(JUDGE0_TOKEN?{"X-Auth-Token":JUDGE0_TOKEN}:{})});
 
+const fetchWithTimeout=async(url,options={},timeoutMs=10000)=>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{...options,signal:controller.signal})}catch(e){if(e?.name==='AbortError')throw new Error(`Code execution service timed out after ${Math.round(timeoutMs/1000)} seconds.`);throw e}finally{clearTimeout(timer)}};
+
 async function execute(sourceCode, languageId, stdin="", limits={}) {
   if (!Number.isInteger(languageId)) throw new Error("Unsupported programming language.");
+  if (String(sourceCode||'').length>100000) throw new Error("Source code is too large. Maximum 100,000 characters.");
+  if (String(stdin||'').length>100000) throw new Error("Input is too large. Maximum 100,000 characters.");
   const body = {source_code:sourceCode, language_id:languageId, stdin, cpu_time_limit:Number(limits.timeLimit||2), memory_limit:Number(limits.memoryLimit||128000)};
-  const create = await fetch(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {method:"POST", headers:headers(), body:JSON.stringify(body)});
+  const create = await fetchWithTimeout(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {method:"POST", headers:headers(), body:JSON.stringify(body)},10000);
   const createText = await create.text();
   let created; try { created=JSON.parse(createText); } catch { throw new Error(`Code execution service returned invalid JSON (HTTP ${create.status}).`); }
   if (!create.ok) throw new Error(created?.error || created?.message || `Code execution service error (${create.status}).`);
   if (!created.token) throw new Error("Code execution service did not return a submission token.");
-  for (let i=0;i<25;i++) {
-    await new Promise(r=>setTimeout(r,350));
-    const resultRes=await fetch(`${JUDGE0_URL}/submissions/${created.token}?base64_encoded=false&fields=stdout,stderr,compile_output,status_id,status,time,memory,message`,{headers:headers()});
+  const deadline=Date.now()+15000;
+  for (let i=0;Date.now()<deadline && i<25;i++) {
+    await new Promise(r=>setTimeout(r,Math.min(900,300+i*100)));
+    const resultRes=await fetchWithTimeout(`${JUDGE0_URL}/submissions/${encodeURIComponent(created.token)}?base64_encoded=false&fields=stdout,stderr,compile_output,status_id,status,time,memory,message`,{headers:headers()},7000);
     const txt=await resultRes.text();
     let result; try { result=JSON.parse(txt); } catch { continue; }
     if (!resultRes.ok) throw new Error(result?.error || result?.message || `Code result error (${resultRes.status}).`);

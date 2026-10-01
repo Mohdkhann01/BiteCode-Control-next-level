@@ -13,18 +13,18 @@ async function buildContext(req){
   const base={
     role:req.user.role,
     currentUser:safeUser(req.user),
-    event:{id:h._id,name:h.name,description:h.description,college:h.college,venue:h.venue,registrationFee:h.registrationFee,teamMin:h.teamMin,teamMax:h.teamMax,status:h.status,registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt,tracks:h.tracks||[],prizes:h.prizes||[],timeline:h.timeline||[],settings:{aiEnabled:h.settings?.aiEnabled!==false,compilerEnabled:h.settings?.compilerEnabled!==false,publicLeaderboard:Boolean(h.settings?.publicLeaderboard)}}
+    event:{id:h._id,name:h.name,description:h.description,college:h.college,venue:h.venue,registrationFee:h.registrationFee,teamMin:h.teamMin,teamMax:h.teamMax,status:h.status,registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt,tracks:h.tracks||[],prizes:h.prizes||[],timeline:h.timeline||[],settings:{aiEnabled:h.settings?.aiEnabled!==false,aiMode:h.settings?.aiMode==='guidance'?'guidance':'full',compilerEnabled:h.settings?.compilerEnabled!==false,publicLeaderboard:Boolean(h.settings?.publicLeaderboard)}}
   };
 
   if(req.user.role==='admin'){
     const [participants,teams,submissions,judges,assignments,evaluations,problems,attendance,certificates,announcements]=await Promise.all([
-      User.find({role:'participant'}).select('name email active paymentStatus college department enrollmentId').sort({createdAt:-1}).limit(500).lean(),
-      Team.find({hackathon:h._id}).populate('leader','name email').populate('members','name email').populate('problem','code title').lean(),
-      Submission.find({hackathon:h._id}).populate('team','name code').populate('problem','code title').select('projectName status submittedAt team problem github liveDemo').lean(),
+      User.find({role:'participant'}).select('name email active paymentStatus college department enrollmentId').sort({createdAt:-1}).limit(100).lean(),
+      Team.find({hackathon:h._id}).select('name code leader members problem status createdAt').populate('leader','name email').populate('members','name email').populate('problem','code title').sort({createdAt:-1}).limit(200).lean(),
+      Submission.find({hackathon:h._id}).populate('team','name code').populate('problem','code title').select('projectName status submittedAt team problem github liveDemo').sort({submittedAt:-1,createdAt:-1}).limit(200).lean(),
       User.countDocuments({role:'judge',active:true}),
-      JudgeAssignment.find({hackathon:h._id}).populate('judge','name email').populate('team','name code').lean(),
-      Evaluation.find({submitted:true}).populate('judge','name').populate('team','name code').select('judge team total submittedAt').lean(),
-      Problem.find({hackathon:h._id}).select('code title track difficulty published').lean(),
+      JudgeAssignment.find({hackathon:h._id}).populate('judge','name email').populate('team','name code').sort({createdAt:-1}).limit(200).lean(),
+      Evaluation.find({hackathon:h._id,submitted:true}).populate('judge','name').populate('team','name code').select('judge team total submittedAt').sort({submittedAt:-1,createdAt:-1}).limit(200).lean(),
+      Problem.find({hackathon:h._id}).select('code title track difficulty published').sort({createdAt:-1}).limit(100).lean(),
       Attendance.countDocuments({hackathon:h._id}),
       Certificate.countDocuments({hackathon:h._id}),
       Announcement.find({hackathon:h._id}).select('title type published createdAt').sort({createdAt:-1}).limit(20).lean()
@@ -56,7 +56,7 @@ async function buildContext(req){
 router.get("/status", auth, async (req,res)=>{
   const h=await currentHackathon();
   const participantEnabled=Boolean(h && h.settings?.aiEnabled !== false);
-  res.json({enabled:req.user.role==='admin'||participantEnabled,participantAccess:participantEnabled,adminAlwaysAvailable:true,eventId:h?._id||null});
+  res.json({enabled:req.user.role==='admin'||participantEnabled,participantAccess:participantEnabled,mode:req.user.role==='admin'?'full':(h?.settings?.aiMode==='guidance'?'guidance':'full'),participantMode:h?.settings?.aiMode==='guidance'?'guidance':'full',adminAlwaysAvailable:true,eventId:h?._id||null});
 });
 
 router.get("/test", (req,res)=>res.json({ok:true,message:"AI routes are connected!"}));
@@ -68,7 +68,8 @@ router.post("/chat", auth, async (req,res)=>{
     const h=await currentHackathon();
     if(req.user.role!=='admin' && (!h || h.settings?.aiEnabled===false)) return res.status(503).json({message:"AI assistance is currently disabled for participants by the administrator."});
     const context=await buildContext(req);
-    const result=await askAI(question,context);
+    const mode=req.user.role==='admin'?'full':(h?.settings?.aiMode==='guidance'?'guidance':'full');
+    const result=await askAI(question,context,{mode});
     res.json({answer:result.answer,model:result.model,usage:result.usage});
   }catch(error){
     console.error('AI ERROR:',error);

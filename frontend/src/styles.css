@@ -536,6 +536,23 @@
 .aiOnlineDot.offline{background:#e26d7a;box-shadow:none}
 
 /* Event challenges + QR attendance */
-.problemSection{margin-bottom:18px}.problemSection>.problemGrid{margin-top:12px}.problemAdminGroup{margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.08)}.problemAdminGroup:first-of-type{border-top:0;margin-top:0}.problemAdminGroup h3{margin:4px 0}.scannerBox{min-height:290px;border:1px dashed rgba(255,255,255,.16);border-radius:16px;padding:14px;display:grid;place-items:center;background:rgba(255,255,255,.02)}#attendance-reader{width:min(100%,520px)}.scannerHidden{display:none}.scannerPlaceholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;min-height:250px;color:var(--muted,#8d93a9)}.scannerPlaceholder svg{color:#8d82ff}.scannerPlaceholder b{color:var(--text,#fff);font-size:18px}.attendanceQrCard{text-align:center}.attendanceQr{width:min(100%,360px);aspect-ratio:1;object-fit:contain;background:#fff;border-radius:14px;padding:12px;margin:10px auto 14px;display:block}.qrToken{display:block;max-width:100%;overflow:auto;margin:0 auto 14px;padding:9px;border-radius:9px;background:rgba(255,255,255,.05)}
+.problemSection{margin-bottom:18px}.problemSection>.problemGrid{margin-top:12px}.problemAdminGroup{margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.08)}.problemAdminGroup:first-of-type{border-top:0;margin-top:0}.problemAdminGroup h3{margin:4px 0}.scannerBox{min-height:290px;border:1px dashed rgba(255,255,255,.16);border-radius:16px;padding:14px;display:grid;place-items:center;background:rgba(255,255,255,.02)}#attendance-reader{width:min(100%,520px);min-height:260px}
+#attendance-reader video{width:100%!important;max-height:420px;object-fit:cover;border-radius:12px} .scannerHidden{display:none;min-height:0}.scannerPlaceholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;min-height:250px;color:var(--muted,#8d93a9)}.scannerPlaceholder svg{color:#8d82ff}.scannerPlaceholder b{color:var(--text,#fff);font-size:18px}.attendanceQrCard{text-align:center}.attendanceQr{width:min(100%,360px);aspect-ratio:1;object-fit:contain;background:#fff;border-radius:14px;padding:12px;margin:10px auto 14px;display:block}.qrToken{display:block;max-width:100%;overflow:auto;margin:0 auto 14px;padding:9px;border-radius:9px;background:rgba(255,255,255,.05)}
 @media print{body *{visibility:hidden!important}.attendanceQrCard,.attendanceQrCard *{visibility:visible!important}.attendanceQrCard{position:absolute;left:0;top:0;width:100%;background:#fff!important;color:#111!important}.attendanceQrCard .qrToken{color:#111!important}.attendanceQrCard button{display:none!important}}
 .scannerType{display:flex;flex-direction:column;gap:7px;max-width:360px;margin:14px 0}.scannerType select{width:100%}
+
+/* BiteCode next-level workspace scrolling and responsive controls */
+html,body,#root{min-height:100%}
+body{overflow-x:hidden;overflow-y:auto}
+.app{min-height:100vh;overflow:hidden}
+.app aside{min-height:0;overflow-y:auto;overflow-x:hidden}
+.app main{min-width:0;min-height:100vh;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.pageScroll{min-height:0;flex:1;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;overscroll-behavior:contain}
+.antiCheatEditor{-webkit-user-select:none;user-select:none}
+@media(max-width:760px){.app{height:auto;min-height:100vh;display:block;overflow:visible}.app aside{height:100vh}.app main{height:auto;min-height:100vh;overflow:visible;display:block}.pageScroll{height:auto;min-height:0;overflow:visible}.tableWrap{overflow-x:auto}.stats{grid-template-columns:1fr 1fr}}
+
+.attendanceFilters{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.attendanceFilters label{display:grid;gap:6px;color:#9aa1b4;font-size:11px}@media(max-width:900px){.attendanceFilters{grid-template-columns:1fr 1fr}}@media(max-width:560px){.attendanceFilters{grid-template-columns:1fr}}
+
+.lockedField{display:flex;flex-direction:column;gap:4px;min-height:44px;justify-content:center;padding:10px 12px;border:1px solid rgba(124,92,255,.5);border-radius:12px;background:rgba(255,255,255,.025)}
+.lockedField b{font-size:14px}.lockedField small{opacity:.65;font-size:11px}.aiModeControl select{min-width:280px}
+@media(max-width:760px){.aiModeControl select{width:100%;min-width:0}}
