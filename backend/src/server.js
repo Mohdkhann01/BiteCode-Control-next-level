@@ -4,7 +4,7 @@ import 'dotenv/config';
 import dns from 'node:dns';
 import net from 'node:net';
 import express from 'express'; import cors from 'cors'; import mongoose from 'mongoose'; import bcrypt from 'bcryptjs'; import rateLimit from 'express-rate-limit'; import fs from 'fs'; import path from 'path'; import crypto from 'crypto';
-import {User,Hackathon,Role,Payment,Team,Invitation,Problem,Submission,JudgeAssignment,Evaluation,CodeSubmission,Announcement,Ticket,Vote,Attendance,Certificate,AuditLog,Notification,Feedback} from './models/index.js';
+import {User,Hackathon,Role,Payment,Team,Invitation,Problem,Submission,JudgeAssignment,Evaluation,CodeSubmission,Announcement,Ticket,Vote,Attendance,Certificate,AuditLog,Notification,Feedback,AntiCheat} from './models/index.js';
 import {auth,allow,permission} from './middleware/auth.js'; 
 
 
@@ -59,6 +59,142 @@ app.post('/api/auth/reset/confirm',asyncRoute(async(req,res)=>{const u=await Use
 app.get('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();res.json({enabled:h?.settings?.aiEnabled!==false,mode:h?.settings?.aiMode==='guidance'?'guidance':'full',enabledForEvent:Boolean(h),mailConfigured}); }));
 app.patch('/api/admin/ai/settings',auth,allow('admin'),asyncRoute(async(req,res)=>{const h=await current();if(!h)return res.status(404).json({message:'No active hackathon'});h.settings=h.settings||{};if(req.body.enabled!==undefined)h.settings.aiEnabled=Boolean(req.body.enabled);if(req.body.mode!==undefined){const mode=String(req.body.mode);if(!['full','guidance'].includes(mode))return res.status(400).json({message:'AI mode must be full or guidance.'});h.settings.aiMode=mode;}await h.save();await audit(AuditLog,req.user,'UPDATE','AISettings',h._id,{enabled:h.settings.aiEnabled,mode:h.settings.aiMode||'full'});res.json({enabled:h.settings.aiEnabled!==false,mode:h.settings.aiMode==='guidance'?'guidance':'full',mailConfigured});}));
 app.patch('/api/admin/events/:id/feature',auth,allow('admin'),asyncRoute(async(req,res)=>{const allowed=['payments','teams','submissions','judging','announcements','certificates','attendance'];const key=String(req.body?.key||'');if(!allowed.includes(key))return res.status(400).json({message:'Invalid event feature'});const h=await Hackathon.findById(req.params.id);if(!h)return res.status(404).json({message:'Hackathon not found'});h.settings=h.settings||{};h.settings.features=h.settings.features||{};h.settings.features[key]=Boolean(req.body.enabled);await h.save();await audit(AuditLog,req.user,'UPDATE','EventFeature',h._id,{key,enabled:h.settings.features[key]});res.json({key,enabled:h.settings.features[key]});}));
+
+
+// Anti-cheat
+app.post('/api/anticheat/incident',auth,asyncRoute(async(req,res)=>{
+  const {hackathon,problem,type,details,screenshot}=req.body||{};
+  if(!type)return res.status(400).json({message:'Anti-cheat incident type is required.'});
+
+  const allowedTypes=[
+    'tab_hidden',
+    'tab_visible',
+    'window_blur',
+    'fullscreen_exit',
+    'clipboard_blocked',
+    'context_menu',
+    'camera_movement'
+  ];
+
+  if(!allowedTypes.includes(String(type))){
+    return res.status(400).json({message:'Invalid anti-cheat incident type.'});
+  }
+
+  const h=hackathon&&isValidObjectId(hackathon)
+    ? await Hackathon.findById(hackathon)
+    : await current();
+
+  if(!h)return res.status(404).json({message:'No active hackathon.'});
+
+  const incident=await AntiCheat.create({
+    hackathon:h._id,
+    user:req.user._id,
+    problem:problem&&isValidObjectId(problem)?problem:undefined,
+    type:String(type),
+    details:details||{},
+    screenshot:screenshot||undefined
+  });
+
+  res.status(201).json(incident);
+}));
+
+app.get('/api/admin/anticheat',auth,allow('admin'),asyncRoute(async(req,res)=>{
+  const h=await current();
+  if(!h)return res.json([]);
+
+  const rawLimit=Number(req.query.limit);
+  const limit=Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit),1),1000)
+    : 300;
+
+  try{
+    const rows=await AntiCheat.find({hackathon:h._id})
+      .sort({createdAt:-1})
+      .limit(limit)
+      .populate('user','name email enrollmentId department group year')
+      .populate('problem','code title')
+      .lean();
+
+    return res.json(rows);
+  }catch(error){
+    console.error('Anti-cheat admin query failed:',error);
+
+    const rows=await AntiCheat.find({hackathon:h._id})
+      .sort({createdAt:-1})
+      .limit(limit)
+      .lean();
+
+    return res.json(rows);
+  }
+}));
+
+
+// Anti-cheat
+app.post('/api/anticheat/incident',auth,asyncRoute(async(req,res)=>{
+  const {hackathon,problem,type,details,screenshot}=req.body||{};
+  if(!type)return res.status(400).json({message:'Anti-cheat incident type is required.'});
+
+  const allowedTypes=[
+    'tab_hidden',
+    'tab_visible',
+    'window_blur',
+    'fullscreen_exit',
+    'clipboard_blocked',
+    'context_menu',
+    'camera_movement'
+  ];
+
+  if(!allowedTypes.includes(String(type))){
+    return res.status(400).json({message:'Invalid anti-cheat incident type.'});
+  }
+
+  const h=hackathon&&isValidObjectId(hackathon)
+    ? await Hackathon.findById(hackathon)
+    : await current();
+
+  if(!h)return res.status(404).json({message:'No active hackathon.'});
+
+  const incident=await AntiCheat.create({
+    hackathon:h._id,
+    user:req.user._id,
+    problem:problem&&isValidObjectId(problem)?problem:undefined,
+    type:String(type),
+    details:details||{},
+    screenshot:screenshot||undefined
+  });
+
+  res.status(201).json(incident);
+}));
+
+app.get('/api/admin/anticheat',auth,allow('admin'),asyncRoute(async(req,res)=>{
+  const h=await current();
+  if(!h)return res.json([]);
+
+  const rawLimit=Number(req.query.limit);
+  const limit=Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit),1),1000)
+    : 300;
+
+  try{
+    const rows=await AntiCheat.find({hackathon:h._id})
+      .sort({createdAt:-1})
+      .limit(limit)
+      .populate('user','name email enrollmentId department group year')
+      .populate('problem','code title')
+      .lean();
+
+    return res.json(rows);
+  }catch(error){
+    console.error('Anti-cheat admin query failed:',error);
+
+    const rows=await AntiCheat.find({hackathon:h._id})
+      .sort({createdAt:-1})
+      .limit(limit)
+      .lean();
+
+    return res.json(rows);
+  }
+}));
 
 // Events
 app.get('/api/hackathons/current',asyncRoute(async(req,res)=>res.json(await current())));
@@ -631,3 +767,7 @@ async function start(){
   app.listen(process.env.PORT||5000,()=>console.log(`API running on ${process.env.PORT||5000}`));
 }
 start().catch(e=>{console.error(e);process.exit(1)});
+
+
+
+
