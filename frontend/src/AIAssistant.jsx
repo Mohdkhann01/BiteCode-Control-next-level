@@ -4,8 +4,9 @@ import axios from "axios";
 
 const PRODUCTION_API="https://bitecode-control-next-level.onrender.com/api";
 const configuredApi=import.meta.env.VITE_API_URL?.trim();
-const API=import.meta.env.PROD?PRODUCTION_API:(configuredApi||"http://localhost:5000/api");
-const api=axios.create({baseURL:API});
+const safeConfiguredApi=configuredApi&&!/-2\.onrender\.com/i.test(configuredApi)?configuredApi:'';
+const API=import.meta.env.PROD?(safeConfiguredApi||PRODUCTION_API):(safeConfiguredApi||"http://localhost:5000/api");
+const api=axios.create({baseURL:API,timeout:20000});
 api.interceptors.request.use(config=>{const token=sessionStorage.getItem("token");if(token)config.headers.Authorization=`Bearer ${token}`;return config});
 const readUser=()=>{try{return JSON.parse(sessionStorage.getItem("user")||"null")}catch{return null}};
 

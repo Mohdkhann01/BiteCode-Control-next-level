@@ -46,6 +46,7 @@ async function execute(sourceCode, languageId, stdin="", limits={}) {
 }
 
 async function currentHackathon(){ return Hackathon.findOne({status:{$nin:["closed","archived"]}}).sort({createdAt:-1}); }
+function compilerDisabledResponse(res){return res.status(503).json({message:"Online compiler is currently disabled by the administrator.",code:"COMPILER_DISABLED"});}
 async function compilerEnabled(h){ return Boolean(h && h.settings?.compilerEnabled !== false); }
 async function teamForUser(hackathonId,userId){
   if(!hackathonId) return null;
@@ -62,7 +63,7 @@ async function hasPermission(user,name){
 router.post("/playground/run", auth, async (req,res)=>{
   try {
     // Playground executions are intentionally NOT persisted in MongoDB.
-    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
+    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return compilerDisabledResponse(res);
     const {language,sourceCode,stdin=""}=req.body||{};
     if(!sourceCode?.trim()) return res.status(400).json({message:"Source code is required."});
     const languageId=LANGUAGE_IDS[language];
@@ -74,7 +75,7 @@ router.post("/playground/run", auth, async (req,res)=>{
 
 router.get("/problems", auth, async (req,res)=>{
   const h=await currentHackathon();
-  if(req.user?.role!=="admin" && !(await compilerEnabled(h))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
+  if(req.user?.role!=="admin" && !(await compilerEnabled(h))) return compilerDisabledResponse(res);
   const filter={published:true};
   if(req.query.hackathonId) filter.hackathon=req.query.hackathonId;
   else if(h) filter.$or=[{hackathon:null},{hackathon:h._id}];
@@ -83,11 +84,11 @@ router.get("/problems", auth, async (req,res)=>{
   res.json(rows);
 });
 
-router.get("/languages", auth, async (req,res)=>{ if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."}); return res.json(Object.entries(LANGUAGE_IDS).map(([key,id])=>({key,id,name:LANGUAGE_NAMES[key]}))); });
+router.get("/languages", auth, async (req,res)=>{ if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return compilerDisabledResponse(res); return res.json(Object.entries(LANGUAGE_IDS).map(([key,id])=>({key,id,name:LANGUAGE_NAMES[key]}))); });
 
 router.get("/problems/:id", auth, async (req,res)=>{
   try {
-    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
+    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return compilerDisabledResponse(res);
     const h=await currentHackathon();
     const p=await Problem.findById(req.params.id).select("code title description track difficulty technologies requirements criteria timeLimit memoryLimit testCases hackathon published");
     const eventVisible=p && p.published && (p.hackathon==null || (h && String(p.hackathon)===String(h._id)));
@@ -99,7 +100,7 @@ router.get("/problems/:id", auth, async (req,res)=>{
 
 router.post("/run", auth, async (req,res)=>{
   try {
-    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
+    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return compilerDisabledResponse(res);
     const {problemId,language,sourceCode,stdin=""}=req.body||{};
     if(!problemId || !sourceCode?.trim()) return res.status(400).json({message:"Problem and source code are required."});
     if(!/^[a-f\d]{24}$/i.test(String(problemId))) return res.status(404).json({message:"Problem not found. Refresh the Code Lab and choose a published problem."});
@@ -113,7 +114,7 @@ router.post("/run", auth, async (req,res)=>{
 
 router.post("/submit", auth, async (req,res)=>{
   try {
-    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return res.status(503).json({message:"Online compiler is currently disabled by the administrator."});
+    if(req.user?.role!=="admin" && !(await compilerEnabled(await currentHackathon()))) return compilerDisabledResponse(res);
     const {problemId,language,sourceCode}=req.body||{};
     if(!problemId || !sourceCode?.trim()) return res.status(400).json({message:"Problem and source code are required."});
     const p=await Problem.findOne({_id:problemId,published:true}); if(!p) return res.status(404).json({message:"Problem not found. Refresh the Code Lab and open a published problem."});

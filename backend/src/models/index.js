@@ -35,6 +35,11 @@ const voteSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackatho
 const attendanceSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon',required:true},user:{type:Schema.Types.ObjectId,ref:'User',required:true},type:{type:String,enum:['entry','exit','workshop','mentor','presentation'],default:'entry'},at:{type:Date,default:Date.now},scannedBy:{type:Schema.Types.ObjectId,ref:'User'}},{timestamps:true});
 attendanceSchema.index({hackathon:1,user:1},{unique:true,partialFilterExpression:{type:'entry'}});
 attendanceSchema.index({hackathon:1,at:-1});
+const certificateSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon',required:true},user:{type:Schema.Types.ObjectId,ref:'User',required:true},type:{type:String,required:true},certificateId:{type:String,required:true,unique:true},fileUrl:String,template:{organizerName:String,organizerLocation:String,established:String,title:String,subtitle:String,body:String,achievementLabel:String,track:String,signatureName:String,signatureTitle:String,logoUrl:String,primaryColor:{type:String,default:'#243b86'},accentColor:{type:String,default:'#c7a45b'}},issuedAt:{type:Date,default:Date.now}},{timestamps:true});
+const codeSubmissionSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon'},problem:{type:Schema.Types.ObjectId,ref:'Problem',required:true},team:{type:Schema.Types.ObjectId,ref:'Team'},user:{type:Schema.Types.ObjectId,ref:'User',required:true},language:String,languageId:Number,sourceCode:String,mode:{type:String,enum:['run','submit'],default:'run'},status:String,score:Number,passed:Number,totalTests:Number,stdout:String,stderr:String,compileOutput:String,time:String,memory:Number,results:Schema.Types.Mixed},{timestamps:true});
+const platformSettingsSchema=new Schema({key:{type:String,unique:true,default:'platform'},compilerEnabled:{type:Boolean,default:true}},{timestamps:true});
+const auditSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon'},actor:{type:Schema.Types.ObjectId,ref:'User'},action:String,entity:String,entityId:String,meta:Schema.Types.Mixed},{timestamps:true});
+
 const antiCheatSchema=new Schema({
   hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon',required:true},
   user:{type:Schema.Types.ObjectId,ref:'User',required:true},
@@ -44,10 +49,7 @@ const antiCheatSchema=new Schema({
   screenshot:String
 },{timestamps:true});
 antiCheatSchema.index({hackathon:1,user:1,createdAt:-1});
-const certificateSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon',required:true},user:{type:Schema.Types.ObjectId,ref:'User',required:true},type:{type:String,required:true},certificateId:{type:String,required:true,unique:true},fileUrl:String,template:{organizerName:String,organizerLocation:String,established:String,title:String,subtitle:String,body:String,achievementLabel:String,track:String,signatureName:String,signatureTitle:String,logoUrl:String,primaryColor:{type:String,default:'#243b86'},accentColor:{type:String,default:'#c7a45b'}},issuedAt:{type:Date,default:Date.now}},{timestamps:true});
-const codeSubmissionSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon'},problem:{type:Schema.Types.ObjectId,ref:'Problem',required:true},team:{type:Schema.Types.ObjectId,ref:'Team'},user:{type:Schema.Types.ObjectId,ref:'User',required:true},language:String,languageId:Number,sourceCode:String,mode:{type:String,enum:['run','submit'],default:'run'},status:String,score:Number,passed:Number,totalTests:Number,stdout:String,stderr:String,compileOutput:String,time:String,memory:Number,results:Schema.Types.Mixed},{timestamps:true});
-const platformSettingsSchema=new Schema({key:{type:String,unique:true,default:'platform'},compilerEnabled:{type:Boolean,default:true}},{timestamps:true});
-const auditSchema=new Schema({hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon'},actor:{type:Schema.Types.ObjectId,ref:'User'},action:String,entity:String,entityId:String,meta:Schema.Types.Mixed},{timestamps:true});
+
 
 const feedbackSchema=new Schema({
   hackathon:{type:Schema.Types.ObjectId,ref:'Hackathon'},
@@ -66,5 +68,3 @@ notificationSchema.index({user:1,read:1,createdAt:-1});
 notificationSchema.index({user:1,createdAt:-1});
 
 export const User=model('User',userSchema),Hackathon=model('Hackathon',hackathonSchema),Role=model('Role',roleSchema),Payment=model('Payment',paymentSchema),Team=model('Team',teamSchema),Invitation=model('Invitation',invitationSchema),Problem=model('Problem',problemSchema),Submission=model('Submission',submissionSchema),JudgeAssignment=model('JudgeAssignment',assignmentSchema),Evaluation=model('Evaluation',evaluationSchema),CodeSubmission=model('CodeSubmission',codeSubmissionSchema),Announcement=model('Announcement',announcementSchema),Ticket=model('Ticket',ticketSchema),Feedback=model('Feedback',feedbackSchema),Vote=model('Vote',voteSchema),Attendance=model('Attendance',attendanceSchema),Certificate=model('Certificate',certificateSchema),AuditLog=model('AuditLog',auditSchema),AntiCheat=model('AntiCheat',antiCheatSchema),PlatformSettings=model('PlatformSettings',platformSettingsSchema),Notification=model('Notification',notificationSchema);
-
-
