@@ -17,54 +17,15 @@ import {mailConfigured,sendFeedbackConfirmation} from './mailer.js';
 
 const app = express();
 
-// CORS: configure the exact frontend origin(s) in Render environment variables.
-// You can provide comma-separated origins in FRONTEND_URL or CORS_ORIGINS.
-// Example: FRONTEND_URL=https://your-site.vercel.app
-const normalizeOrigin = (value) => {
-  try {
-    return new URL(String(value).trim()).origin;
-  } catch {
-    return '';
-  }
-};
-
-const configuredOrigins = [
-  process.env.CORS_ORIGINS || '',
-  process.env.FRONTEND_URL || '',
-  process.env.CLIENT_URL || '',
-  process.env.APP_URL || ''
-]
-  .join(',')
-  .split(',')
-  .map(normalizeOrigin)
-  .filter(Boolean);
-
-const localDevelopmentOrigins = new Set([
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000'
-]);
-
-const allowedOrigins = new Set([...configuredOrigins, ...localDevelopmentOrigins]);
-
+// Production-safe CORS: accept configured frontend origins without relying on
+// cors' array coercion, while still allowing local development.
+const allowedOrigins=(process.env.FRONTEND_URL||'').split(',').map(x=>x.trim()).filter(Boolean);
 app.use(cors({
-  origin: (origin, callback) => {
-    // Requests without an Origin header are usually server-to-server or health checks.
-    if (!origin) return callback(null, true);
-
-    const normalizedOrigin = normalizeOrigin(origin);
-    if (normalizedOrigin && allowedOrigins.has(normalizedOrigin)) {
-      return callback(null, true);
-    }
-
-    // Do not throw an application error for a blocked browser origin; simply
-    // omit CORS permission. The browser will block the response.
-    return callback(null, false);
+  origin:(origin,callback)=>{
+    if(!origin || !allowedOrigins.length || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return callback(null,true);
+    return callback(new Error('CORS origin is not allowed.'));
   },
-  credentials: true,
-  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  credentials:true
 }));
 
 app.use(express.json({
