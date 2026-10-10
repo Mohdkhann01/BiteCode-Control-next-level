@@ -11,7 +11,9 @@ import {auth,allow,permission} from './middleware/auth.js';
 import aiRoutes from "./routes/aiRoutes.js";
 import compilerRoutes from "./routes/compilerRoutes.js";
 
-import {upload} from './middleware/upload.js'; import {tokenFor,code,certId,audit} from './utils.js';
+import {upload} from './middleware/upload.js';
+import {imageUpload,uploadImageBuffer,cloudinaryConfigured} from './middleware/cloudinaryUpload.js';
+import {tokenFor,code,certId,audit} from './utils.js';
 import {mailConfigured,sendFeedbackConfirmation} from './mailer.js';
 
 
@@ -52,10 +54,22 @@ const ensureAttendanceToken=async u=>{if(u.attendanceToken)return u.attendanceTo
 const validateEvent=body=>{if(body.teamMin!=null&&body.teamMax!=null&&Number(body.teamMin)>Number(body.teamMax))return 'Team minimum cannot exceed team maximum';return null};
 
 app.get('/api',(_,res)=>res.json({ok:true,service:'BiteCode Control API',version:'2.1.0'}));
+
+
+// Authenticated image upload to Cloudinary. Never expose Cloudinary secrets to the browser.
+app.post('/api/media/images', auth, imageUpload.single('image'), asyncRoute(async (req, res) => {
+  if (!req.file) return res.status(400).json({message:'Choose a JPEG, PNG, or WebP image.'});
+  const result = await uploadImageBuffer(req.file.buffer, {
+    folder: `bitecode-control/${String(req.user.role || 'user')}`,
+    public_id: `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`
+  });
+  res.status(201).json({ok:true, ...result});
+}));
+
 app.get('/api/health',(_,res)=>res.json({ok:true,service:'hackathon-platform',database:mongoose.connection.readyState===1,time:new Date().toISOString()}));
 app.get('/api/system/status',asyncRoute(async(req,res)=>{
   const h=await current();
-  res.json({ok:mongoose.connection.readyState===1,event:h?{id:h._id,name:h.name,status:h.status}:null,services:{feedback:true,razorpay:razorpayConfigured(),compiler:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),ai:Boolean(process.env.OPENROUTER_API_KEY),gmail:mailConfigured()}});
+  res.json({ok:mongoose.connection.readyState===1,event:h?{id:h._id,name:h.name,status:h.status}:null,services:{feedback:true,razorpay:razorpayConfigured(),compiler:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),ai:Boolean(process.env.OPENROUTER_API_KEY),cloudinary:cloudinaryConfigured,gmail:mailConfigured()}});
 }));
 app.post('/api/auth/register',asyncRoute(async(req,res)=>{const {name,email,password}=req.body;if(!name||!email||!password||password.length<8)return res.status(400).json({message:'Name, email and password (8+ chars) are required'});if(await User.exists({email:email.toLowerCase()}))return res.status(409).json({message:'Email already registered'});const u=await User.create({name,email:email.toLowerCase(),passwordHash:await bcrypt.hash(password,12),attendanceToken:crypto.randomBytes(24).toString('base64url')});res.status(201).json({token:tokenFor(u),user:safe(u)})}));
 app.post('/api/auth/login',asyncRoute(async(req,res)=>{const email=req.body.email?.toLowerCase().trim();const u=await User.findOne({email});if(!u||!await bcrypt.compare(req.body.password||'',u.passwordHash))return res.status(401).json({message:'Invalid email or password'});if(u.active===false)return res.status(403).json({message:'This account is disabled. Please contact an administrator.'});res.json({token:tokenFor(u),user:safe(u)})}));
@@ -481,7 +495,7 @@ app.get('/api/admin/operations',auth,allow('admin'),asyncRoute(async(req,res)=>{
   const assignedTeams=await JudgeAssignment.find({hackathon:id}).distinct('team');
   const unassigned=Math.max(0,submissions-(new Set(assignedTeams.map(String)).size));
   const phase=eventPhase(h);
-  res.json({event:{id:h._id,name:h.name,status:h.status,phase,dates:{registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt}},features:{ai:h.settings?.aiEnabled!==false,compiler:h.settings?.compilerEnabled!==false,...(h.settings?.features||{})},metrics:{participants,paid,teams,confirmedTeams,submissions,judges,assignments,completedEvaluations,publishedProblems,pendingPayments,checkedIn,unassignedTeams:unassigned,audit24h:unreadAudit},health:{database:mongoose.connection.readyState===1,judgeService:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),jwtConfigured:Boolean(process.env.JWT_SECRET),ai:Boolean(process.env.OPENROUTER_API_KEY),gmail:mailConfigured()}});
+  res.json({event:{id:h._id,name:h.name,status:h.status,phase,dates:{registrationDeadline:h.registrationDeadline,hackStart:h.hackStart,hackEnd:h.hackEnd,submissionDeadline:h.submissionDeadline,judgingStart:h.judgingStart,judgingEnd:h.judgingEnd,resultsAt:h.resultsAt}},features:{ai:h.settings?.aiEnabled!==false,compiler:h.settings?.compilerEnabled!==false,...(h.settings?.features||{})},metrics:{participants,paid,teams,confirmedTeams,submissions,judges,assignments,completedEvaluations,publishedProblems,pendingPayments,checkedIn,unassignedTeams:unassigned,audit24h:unreadAudit},health:{database:mongoose.connection.readyState===1,judgeService:Boolean(process.env.JUDGE0_URL||'https://ce.judge0.com'),jwtConfigured:Boolean(process.env.JWT_SECRET),ai:Boolean(process.env.OPENROUTER_API_KEY),cloudinary:cloudinaryConfigured,gmail:mailConfigured()}});
 }));
 
 app.post('/api/admin/judges/auto-assign',auth,allow('admin'),asyncRoute(async(req,res)=>{
@@ -519,7 +533,8 @@ app.post('/api/anticheat/incident',auth,asyncRoute(async(req,res)=>{
   const type=String(req.body?.type||'');
   if(!allowed.includes(type))return res.status(400).json({message:'Invalid anti-cheat event.'});
   let screenshot=typeof req.body?.screenshot==='string'?req.body.screenshot:'';
-  if(screenshot.length>1400000)screenshot='';
+  // Store a Cloudinary URL, not a large base64 image in MongoDB. Legacy data URLs are not accepted here.
+  if(screenshot && (!/^https:\/\/res\.cloudinary\.com\/[A-Za-z0-9_-]+\/image\/upload\//.test(screenshot) || screenshot.length>2048)) screenshot='';
   const row=await AntiCheat.create({hackathon:h._id,user:req.user._id,problem:req.body?.problemId||undefined,type,details:req.body?.details||{},screenshot:screenshot||undefined});
   await audit(AuditLog,req.user,'ANTICHEAT','AntiCheat',row._id,{type,problem:req.body?.problemId||null});
   res.status(201).json({ok:true,id:row._id,type});
@@ -592,7 +607,7 @@ app.use('/api', (req,res,next)=>{
   res.status(404).json({message:'API endpoint not found.',method:req.method,path:req.originalUrl});
 });
 
-app.use((err,req,res,next)=>{console.error(err);if(err?.name==='CastError')return res.status(400).json({message:`Invalid ${err.path||'identifier'}.`});if(err?.code===11000)return res.status(409).json({message:'A record with these details already exists.'});if(err?.name==='ValidationError')return res.status(400).json({message:Object.values(err.errors||{}).map(x=>x.message).join('; ')||'Validation failed.'});res.status(err.status||500).json({message:err.message||'Server error'});});
+app.use((err,req,res,next)=>{console.error(err);if(err?.name==='MulterError')return res.status(400).json({message:err.message||'Invalid upload.'});if(err?.name==='CastError')return res.status(400).json({message:`Invalid ${err.path||'identifier'}.`});if(err?.code===11000)return res.status(409).json({message:'A record with these details already exists.'});if(err?.name==='ValidationError')return res.status(400).json({message:Object.values(err.errors||{}).map(x=>x.message).join('; ')||'Validation failed.'});res.status(err.status||500).json({message:err.message||'Server error'});});
 function configureMongoDns(){
   const raw=process.env.MONGODB_DNS_SERVERS?.split(',').map(x=>x.trim()).filter(Boolean)||[];
   const configured=raw.filter(value=>net.isIP(value));

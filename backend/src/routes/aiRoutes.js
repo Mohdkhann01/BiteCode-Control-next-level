@@ -56,7 +56,19 @@ async function buildContext(req){
 router.get("/status", auth, async (req,res)=>{
   const h=await currentHackathon();
   const participantEnabled=Boolean(h && h.settings?.aiEnabled !== false);
-  res.json({enabled:req.user.role==='admin'||participantEnabled,participantAccess:participantEnabled,mode:req.user.role==='admin'?'full':(h?.settings?.aiMode==='guidance'?'guidance':'full'),participantMode:h?.settings?.aiMode==='guidance'?'guidance':'full',adminAlwaysAvailable:true,eventId:h?._id||null});
+  const providerConfigured=Boolean(process.env.OPENROUTER_API_KEY);
+  const enabled=req.user.role==='admin'||participantEnabled;
+  res.set('Cache-Control','no-store');
+  res.json({
+    enabled,
+    participantAccess:participantEnabled,
+    available:enabled && providerConfigured,
+    providerConfigured,
+    mode:req.user.role==='admin'?'full':(h?.settings?.aiMode==='guidance'?'guidance':'full'),
+    participantMode:h?.settings?.aiMode==='guidance'?'guidance':'full',
+    adminAlwaysAvailable:true,
+    eventId:h?._id||null
+  });
 });
 
 router.get("/test", (req,res)=>res.json({ok:true,message:"AI routes are connected!"}));

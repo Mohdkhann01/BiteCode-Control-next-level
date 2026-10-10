@@ -736,3 +736,17 @@ nav a:hover{background:rgba(22,119,255,.1)}nav a.active{background:linear-gradie
 @media(max-width:650px){.bcUniversityBrand{gap:7px}.bcUniversityBrand>img{width:34px;height:34px}.bcUniversityBrand .bcBrandText{font-size:8px!important}.bcUniversityBrand .bcBrandText small{font-size:6px}.bcBrandDivider{height:26px;margin:0 1px}.bcBiteBrand{display:none!important}.bcBlueHome .bcHeroContent h1{font-size:clamp(43px,13vw,70px)}.bcBlueHome .bcHero{min-height:720px}.bcRobotSection{padding:70px 18px}.bcRobotStage{min-height:510px;border-radius:15px}.bcHumanoid{transform:translate(-50%,-50%) scale(.82);transform-origin:center center}.bcRobotHud{left:12px;right:12px;font-size:7px}.bcRobotCallout{font-size:7px;padding:5px}.calloutOne{left:3%}.calloutTwo,.calloutThree{right:2%}.bcRobotOrbit{width:280px;height:400px}.orbitTwo{width:330px;height:280px}.bcOfficialStamp{left:18px!important;bottom:18px!important}.bcBlueHome .bcNav{padding-left:15px;padding-right:15px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
+
+
+/* Improve native select/option contrast, including multi-select controls. */
+select { color-scheme: dark; }
+select option, select optgroup { background-color: #101521; color: #f4f7ff; }
+select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid #54c9ff; outline-offset: 2px; }
+@media (max-width: 760px) {
+  .aiChat { left: 12px; right: 12px; bottom: 12px; width: auto; height: min(78dvh, 620px); border-radius: 18px; }
+  .aiFloatingButton { right: 16px; bottom: 16px; }
+  .paymentRow { min-width: 0; overflow-wrap: anywhere; }
+  .roleWorkspaceGrid { grid-template-columns: minmax(0, 1fr); }
+  .toolbar { flex-wrap: wrap; gap: 10px; }
+  .toolbar .search { min-width: 0; width: 100%; }
+}

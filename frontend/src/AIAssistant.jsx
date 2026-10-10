@@ -40,10 +40,10 @@ export default function AIAssistant(){
       if(!u){setEnabled(false);setOpen(false);setAvailable(false);return;}
       if(u.role==='admin'){
         setEnabled(true);
-        try{const r=await api.get('/ai/status');setAvailable(r.data?.enabled===true);setMode(r.data?.mode==='guidance'?'guidance':'full')}catch{setAvailable(false);setMode('full')}
+        try{const r=await api.get('/ai/status');setAvailable(r.data?.available===true);setMode(r.data?.mode==='guidance'?'guidance':'full')}catch{setAvailable(false);setMode('full')}
         return;
       }
-      try{const r=await api.get('/ai/status');setEnabled(r.data?.enabled===true);setAvailable(r.data?.enabled===true);setMode(r.data?.mode==='guidance'?'guidance':'full');if(r.data?.enabled!==true)setOpen(false)}catch{setEnabled(false);setAvailable(false);setMode('full');setOpen(false)}
+      try{const r=await api.get('/ai/status');setEnabled(r.data?.enabled===true);setAvailable(r.data?.available===true);setMode(r.data?.mode==='guidance'?'guidance':'full');if(r.data?.enabled!==true)setOpen(false)}catch{setEnabled(false);setAvailable(false);setMode('full');setOpen(false)}
     };
     refresh();
     const onStorage=()=>refresh();
