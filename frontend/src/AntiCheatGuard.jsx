@@ -19,19 +19,38 @@ function loadHtml2Canvas(){
 
 export default function AntiCheatGuard({children,problemId}){
   const [incidents,setIncidents]=useState(0);
-  const videoRef=useRef(null),streamRef=useRef(null),lastFrameRef=useRef(null),canvasRef=useRef(null),busyRef=useRef(false),mounted=useRef(true);
+  const videoRef=useRef(null),streamRef=useRef(null),lastFrameRef=useRef(null),canvasRef=useRef(null),busyRef=useRef(false),mounted=useRef(true),lastCameraIncidentRef=useRef(0),lastEvidenceAtRef=useRef(0);
   const report=async(type,extra={})=>{
-    if(busyRef.current&&type==='tab_hidden')return;
-    if(type==='tab_hidden')busyRef.current=true;
-    let screenshot=null;
+    const screenshotEligible=['tab_hidden','window_blur','fullscreen_exit'].includes(type);
+    if(type==='tab_hidden'){
+      if(busyRef.current)return;
+      busyRef.current=true;
+    }
+    let screenshotUrl=null;
+    // A website can capture only its rendered page content here, not the entire desktop.
+    // Only capture for meaningful focus/fullscreen events; never for routine camera movement,
+    // copy/paste attempts, context-menu attempts, or tab-visible notifications.
+    if(screenshotEligible && Date.now()-lastEvidenceAtRef.current>8000){
+      lastEvidenceAtRef.current=Date.now();
+      try{
+        const html2canvas=await loadHtml2Canvas();
+        const canvas=await html2canvas(document.body,{scale:0.45,useCORS:true,logging:false,backgroundColor:'#fff'});
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.45));
+        if(blob && blob.size<=8*1024*1024){
+          const form=new FormData();
+          form.append('image',blob,`anti-cheat-${Date.now()}.jpg`);
+          const uploaded=await api.post('/media/images',form,{headers:{'Content-Type':'multipart/form-data'}});
+          screenshotUrl=uploaded.data?.url||null;
+        }
+      }catch{
+        // Event reporting still succeeds if screenshot capture/upload is unavailable.
+      }
+    }
     try{
-      const html2canvas=await loadHtml2Canvas();
-      const canvas=await html2canvas(document.body,{scale:0.55,useCORS:true,logging:false,backgroundColor:'#fff'});
-      screenshot=canvas.toDataURL('image/jpeg',0.48);
-      if(screenshot.length>1400000)screenshot=null;
+      await api.post('/anticheat/incident',{problemId,type,details:extra,screenshot:screenshotUrl});
+      if(mounted.current)setIncidents(x=>x+1);
     }catch{}
-    try{await api.post('/anticheat/incident',{problemId,type,details:extra,screenshot});setIncidents(x=>x+1)}catch{}
-    finally{if(type==='tab_hidden')setTimeout(()=>{busyRef.current=false},1500)}
+    finally{if(type==='tab_hidden')setTimeout(()=>{busyRef.current=false},2500)}
   };
   useEffect(()=>{
     mounted.current=true;
@@ -54,7 +73,7 @@ export default function AntiCheatGuard({children,problemId}){
         timer=setInterval(()=>{
           if(document.hidden||!v.videoWidth)return;
           ctx.drawImage(v,0,0,32,24);const data=ctx.getImageData(0,0,32,24).data;
-          if(lastFrameRef.current){let diff=0;for(let i=0;i<data.length;i+=4)diff+=Math.abs(data[i]-lastFrameRef.current[i])+Math.abs(data[i+1]-lastFrameRef.current[i+1])+Math.abs(data[i+2]-lastFrameRef.current[i+2]);const avg=diff/(32*24*3);if(avg>22)report('camera_movement',{score:Number(avg.toFixed(2))});}
+          if(lastFrameRef.current){let diff=0;for(let i=0;i<data.length;i+=4)diff+=Math.abs(data[i]-lastFrameRef.current[i])+Math.abs(data[i+1]-lastFrameRef.current[i+1])+Math.abs(data[i+2]-lastFrameRef.current[i+2]);const avg=diff/(32*24*3);if(avg>30 && Date.now()-lastCameraIncidentRef.current>15000){lastCameraIncidentRef.current=Date.now();report('camera_movement',{sceneChangeScore:Number(avg.toFixed(2)),note:'Large camera-frame change; review manually, this is not proof of cheating.'});}}
           lastFrameRef.current=data;
         },1200);
       }catch{ /* Camera is optional; tab/window monitoring still works. */ }
